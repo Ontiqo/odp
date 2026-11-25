@@ -1,0 +1,199 @@
+//! L1 control channel and its messages (L3 session, L5 clock and sync, L6 reliable keys, L7 cinema).
+//!
+//! Framing: `u32` big-endian length, then the message. Before the session keys exist (`hello`, `pair.*`,
+//! `session.offer`), the message is JSON as it is; after, it is the JSON sealed on the control channel. JSON keeps the
+//! protocol easy to read and to implement anywhere; every message has `t` (its type) and requests have `id`, which the
+//! reply repeats.
+
+use serde::{Deserialize, Serialize};
+
+/// The longest framed message accepted (64 KiB): control messages are small; media goes over UDP.
+pub const MAX_MESSAGE: usize = 64 * 1024;
+
+/// A video format a receiver can decode.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Decode {
+    /// "h264", "hevc" or "av1".
+    pub codec: String,
+    pub max_w: u32,
+    pub max_h: u32,
+    pub max_fps: u32,
+    /// In hardware (cheap to run) or not.
+    pub hw: bool,
+}
+
+/// What a receiver can do (`hello.caps`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Caps {
+    #[serde(default)]
+    pub decode: Vec<Decode>,
+    /// The display: pixels and the refresh rates it can switch to.
+    #[serde(default)]
+    pub display: Option<Display>,
+    /// Audio channels it plays (0: no sound).
+    #[serde(default)]
+    pub audio_channels: u8,
+    #[serde(default)]
+    pub keyboard: bool,
+    #[serde(default)]
+    pub pointer: bool,
+    /// Touch contacts it reports at once (0: no touch).
+    #[serde(default)]
+    pub touch: u8,
+    /// DRM systems its film player has ("widevine", "playready", "fairplay"); empty: no cinema.
+    #[serde(default)]
+    pub cinema: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Display {
+    pub w: u32,
+    pub h: u32,
+    pub refresh: Vec<u32>,
+    /// Latencies from the display's EDID (HDMI), when it states them.
+    #[serde(default)]
+    pub video_latency_ms: Option<u32>,
+    #[serde(default)]
+    pub audio_latency_ms: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    Mirror,
+    Extend,
+    Cinema,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayState {
+    Playing,
+    Paused,
+}
+
+/// Every control message. `t` names the variant on the wire (`"session.start"`, …).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t")]
+pub enum Message {
+    #[serde(rename = "hello")]
+    Hello { versions: Vec<String>, id: String, name: String, role: String, #[serde(default)] caps: Caps },
+    #[serde(rename = "pair.start")]
+    PairStart { spake: String },
+    #[serde(rename = "pair.confirm")]
+    PairConfirm { sealed: String },
+    #[serde(rename = "session.offer")]
+    SessionOffer { ephemeral: String, identity: String, signature: String },
+    #[serde(rename = "session.start")]
+    SessionStart { id: u32, mode: Mode, codec: String, w: u32, h: u32, fps: u32, bitrate_kbps: u32, audio: bool, group: Option<String> },
+    #[serde(rename = "session.ok")]
+    SessionOk { id: u32, udp_port: u16 },
+    #[serde(rename = "session.update")]
+    SessionUpdate { fps: Option<u32>, bitrate_kbps: Option<u32>, w: Option<u32>, h: Option<u32> },
+    #[serde(rename = "session.keyframe")]
+    Keyframe,
+    #[serde(rename = "session.stop")]
+    SessionStop,
+    #[serde(rename = "media.nack")]
+    Nack { stream: u8, seqs: Vec<u32> },
+    #[serde(rename = "media.report")]
+    Report { lost: u32, received: u32, jitter_us: u32 },
+    #[serde(rename = "sync.target")]
+    SyncTarget { delay_us: i64 },
+    #[serde(rename = "sync.latency")]
+    SyncLatency { video_us: i64, audio_us: i64, source: String },
+    #[serde(rename = "sync.output")]
+    SyncOutput { device: String, kind: String, reported_us: i64 },
+    #[serde(rename = "sync.offset")]
+    SyncOffset { us: i64 },
+    #[serde(rename = "cal.chirp")]
+    Chirp { at_us: i64, signal: String, gain: f32 },
+    #[serde(rename = "cal.result")]
+    CalResult { receiver: String, arrival_us: i64, level_db: f32 },
+    #[serde(rename = "input.key")]
+    Key { usage: u16, down: bool, modifiers: u8 },
+    #[serde(rename = "cinema.open")]
+    CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, state: PlayState, at_us: i64 },
+    #[serde(rename = "cinema.control")]
+    CinemaControl { state: PlayState, position_ms: i64, rate: f64, at_us: i64 },
+    #[serde(rename = "cinema.status")]
+    CinemaStatus { position_ms: i64, at_us: i64, state: PlayState, error: Option<String> },
+    #[serde(rename = "cinema.close")]
+    CinemaClose,
+    #[serde(rename = "error")]
+    Error { id: Option<u32>, code: String, text: String },
+    #[serde(rename = "bye")]
+    Bye,
+}
+
+impl Message {
+    pub fn to_json(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("messages always serialise")
+    }
+
+    /// Parses a message; unknown fields are ignored (minor versions add them), unknown types are an error the
+    /// caller may ignore.
+    pub fn from_json(bytes: &[u8]) -> Result<Message, String> {
+        serde_json::from_slice(bytes).map_err(|e| e.to_string())
+    }
+}
+
+/// `u32` big-endian length, then `body`.
+pub fn frame(body: &[u8]) -> Vec<u8> {
+    let mut out = (body.len() as u32).to_be_bytes().to_vec();
+    out.extend_from_slice(body);
+    out
+}
+
+/// Reads one frame from a stream; Ok(None) at a clean end. A length over [`MAX_MESSAGE`] is an error, before reading.
+pub fn read_frame(r: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+    let mut len = [0u8; 4];
+    match r.read_exact(&mut len) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e),
+    }
+    let n = u32::from_be_bytes(len) as usize;
+    if n == 0 || n > MAX_MESSAGE {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "a control message of a wrong size"));
+    }
+    let mut body = vec![0u8; n];
+    r.read_exact(&mut body)?;
+    Ok(Some(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messages_name_their_type_and_round_trip() {
+        let m = Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1920, h: 1080, fps: 60, bitrate_kbps: 20_000, audio: true, group: None };
+        let json = String::from_utf8(m.to_json()).unwrap();
+        assert!(json.starts_with(r#"{"t":"session.start","id":1,"mode":"mirror""#), "{json}");
+        assert_eq!(Message::from_json(json.as_bytes()).unwrap(), m);
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored_and_unknown_types_are_errors() {
+        let m = Message::from_json(br#"{"t":"sync.offset","us":-40000,"later":true}"#).unwrap();
+        assert_eq!(m, Message::SyncOffset { us: -40_000 });
+        assert!(Message::from_json(br#"{"t":"something.new"}"#).is_err());
+    }
+
+    #[test]
+    fn a_hello_without_caps_still_reads() {
+        let m = Message::from_json(br#"{"t":"hello","versions":["odp/0.1"],"id":"r1","name":"Projector","role":"receiver"}"#).unwrap();
+        assert!(matches!(m, Message::Hello { caps, .. } if caps == Caps::default()));
+    }
+
+    #[test]
+    fn frames_round_trip_and_oversized_ones_are_refused() {
+        let body = Message::Bye.to_json();
+        let f = frame(&body);
+        assert_eq!(read_frame(&mut &f[..]).unwrap(), Some(body));
+        assert_eq!(read_frame(&mut &[][..]).unwrap(), None);
+        let big = ((MAX_MESSAGE + 1) as u32).to_be_bytes();
+        assert!(read_frame(&mut &big[..]).is_err());
+    }
+}

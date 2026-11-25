@@ -7,8 +7,12 @@
 //! - [`session`]: session keys and sealing per channel (L2)
 //! - [`clock`]: the shared clock (L5)
 //! - [`media`]: media datagrams, fragmentation and reassembly (L4)
+//! - [`control`]: the control channel's framing and messages (L1, L3, L5, L7)
+//! - [`input`]: pointer and touch from a receiver (L6)
 
 pub mod clock;
+pub mod control;
+pub mod input;
 pub mod keys;
 pub mod media;
 pub mod pair;

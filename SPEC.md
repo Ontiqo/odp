@@ -38,23 +38,28 @@ is the set of receivers in one synced presentation.
 - Omninput hosts additionally see receivers in their own heartbeats (`role: "receiver"`); that is internal.
 
 ### L1 Control channel
-- Framing: `u32` big-endian length, then a CBOR map (or JSON in the web profile). Each message has `t` (type) and, for
-  requests, `id` (echoed in the reply).
+- Framing: `u32` big-endian length (at most 64 KiB), then a JSON object, sealed on the control channel once the session
+  keys exist. Each message has `t` (type) and, for requests, `id` (echoed in the reply). JSON (not CBOR) keeps it easy
+  to implement and read everywhere; the messages are small.
 - Message families: `hello`, `pair.*`, `session.*`, `clock.*` (bootstrap only), `input.key` (reliable key events),
   `cinema.*`, `error`, `bye`. Every reply to a request is either the matching `*.ok` or `error {code, text}`.
 
 ### L2 Pairing and encryption
 - Each side has a long-term **Ed25519** identity key; fingerprint = first 16 hex of SHA-256 of the public key,
   shown `XXXX-XXXX-XXXX-XXXX`. (Omninput's P-256 key stays for its own protocol; hosts hold one ODP key too.)
-- **Pairing with a PIN:** the receiver shows a 6-digit PIN. Both sides run **CPace** (a balanced PAKE, CFRG draft,
-  on Ristretto255) with the PIN, then exchange identity keys under the resulting key and sign the transcript. A wrong
-  PIN fails without revealing anything; the receiver locks pairing for 30 s after 3 failures.
+- **Pairing with a PIN:** the receiver shows a 6-digit PIN. Both sides run **SPAKE2** (Ed25519 group; host is side A
+  with identity `odp host`, receiver side B with `odp receiver`) with the PIN, derive `h2r` and `r2h` keys from the
+  shared secret with HKDF-SHA-256 (salt `odp/0.1 pair`), and each sends its identity key sealed with ChaCha20-Poly1305
+  under its direction's key. A wrong PIN fails the seal check and reveals nothing more; the receiver locks pairing for
+  30 s after 3 failures.
 - **Pairing with a QR code:** the QR carries `odp://pair?id=…&fp=…&pin=…`; scanning it on the host pins the
   fingerprint as well as supplying the PIN.
 - **Every session:** an X25519 ephemeral exchange, signed by both identity keys, then HKDF-SHA-256 derives separate keys
-  for control, media and input in each direction. All L1 messages after `hello` and all UDP packets are sealed with
-  **ChaCha20-Poly1305** (AES-GCM optional where hardware favours it), nonce = direction ‖ 64-bit packet counter;
-  receivers drop replays outside a 1024-packet window. Keys rotate every 2^32 packets or 24 h.
+  for control, media and input in each direction (HKDF-SHA-256, salt = the signed transcript, info `odp/0.1 h2r media`
+  and so on). All L1 messages after the exchange and all UDP packets are sealed with **ChaCha20-Poly1305**: a sealed
+  message is the 8-byte counter, then ciphertext and tag; nonce = 4-byte channel tag (`odpc`, `odpm`, `odpi`) ‖ the
+  counter. Receivers accept a counter once, within 1024 of the highest seen. A session lasts at most 2^32 messages
+  per channel or 24 h; then a new exchange.
 - Unpairing removes the stored key; a receiver can be reset to forget all hosts (kiosk: a button on the boot screen).
 
 ### L3 Session
@@ -121,6 +126,4 @@ is the set of receivers in one synced presentation.
   published with version 1.0.
 
 ## Open questions before 1.0
-- CBOR vs JSON on L1 for native profiles (CBOR is smaller; JSON is easier for hobbyists).
-- CPace vs SPAKE2: pick by the maturity of implementations in Rust, Swift, Kotlin and JavaScript.
 - Whether multichannel audio and HDR metadata belong in 1.0 or 1.1.
