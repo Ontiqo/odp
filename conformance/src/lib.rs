@@ -191,6 +191,7 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
         eprintln!("Press a key on the receiver's keyboard or remote in the next {} s.", total.as_secs());
     }
     let mut cinema_sent = false;
+    let mut key_requests: Vec<u64> = Vec::new();
     let mut buf = vec![0u8; 2048];
     while started.elapsed() < total {
         // The video, 30 frames a second, from the key frame again after a loss.
@@ -238,6 +239,7 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
             let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));
             match link.recv() {
                 Ok(Some(Message::Keyframe)) => {
+                    key_requests.push(started.elapsed().as_millis() as u64);
                     if dropped_at.is_some() && asked_key.is_none() {
                         asked_key = Some(Instant::now());
                         next = 0; // the key frame
@@ -265,7 +267,7 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
     r.add(Level::Basic, "asks for a key frame after a lost frame", match (dropped_at, asked_key) {
         (Some(d), Some(a)) if a.duration_since(d) < Duration::from_secs(2) => Outcome::Pass,
         (Some(_), Some(_)) => Outcome::Fail("asked, but more than 2 s after the loss".into()),
-        _ => Outcome::Fail("no session.keyframe".into()),
+        _ => Outcome::Fail(format!("no session.keyframe after the loss at {} ms (requests at {key_requests:?} ms)", dropped_at.map(|d| d.duration_since(started).as_millis()).unwrap_or(0))),
     });
     r.add(Level::Basic, "ignores a replayed packet", if alive { Outcome::Pass } else { Outcome::Fail("the session ended".into()) });
     r.add(Level::Synced, "reports its delay (sync.latency)", if latency { Outcome::Pass } else { Outcome::Fail("no sync.latency".into()) });
