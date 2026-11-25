@@ -15,8 +15,20 @@ let decoder = null, codec = "", screenId = "";
 const canvas = $("picture"), ctx = canvas.getContext("2d");
 // Without WebCodecs (a page from a computer on the network isn't a secure page; many TV browsers): MSE on a <video>.
 const webcodecs = "VideoDecoder" in window;
-const mse = webcodecs ? null : Mse.create($("video"));
+const mse = webcodecs ? null : Mse.create($("video"), (us) => delayed(us));
+// The delay from capture to picture, reported every 5 s (odp sync.latency), so a group waits for this screen.
+let delays = [], reported = 0;
+function delayed(us) {
+  if (us <= 0 || us > 5e6) return;
+  delays.push(us);
+  if (delays.length > 300) delays.splice(0, 150);
+  if (Date.now() - reported >= 5000 && delays.length >= 10) {
+    call(wasm.odp_latency, [...delays].sort((a, b) => a - b)[delays.length >> 1]);
+    reported = Date.now();
+  }
+}
 let size = [1920, 1080];
+const captured = new Map();
 
 // USB HID usages (page 7) for KeyboardEvent.code: what ODP sends for keys.
 const HID = {};
@@ -45,7 +57,10 @@ function call(fn, ...args) {
     i += 5 + len;
     if (kind === 0 || kind === 1) send(kind, body);
     else if (kind === 2) event(JSON.parse(new TextDecoder().decode(body)));
-    else if (kind === 3) frame(body.subarray(9), Number(new DataView(body.buffer, body.byteOffset).getBigInt64(0, true)), body[8] === 1);
+    else if (kind === 3) {
+      const dv = new DataView(body.buffer, body.byteOffset);
+      frame(body.subarray(17), Number(dv.getBigInt64(0, true)), body[8] === 1, Number(dv.getBigInt64(9, true)));
+    }
     else if (kind === 4) sound(body.subarray(8), Number(new DataView(body.buffer, body.byteOffset).getBigInt64(0, true)));
   }
 }
@@ -115,9 +130,9 @@ function codecOf(au) {
   return null;
 }
 
-function frame(au, showAtUs, key) {
+function frame(au, showAtUs, key, capturedUs) {
   if (mse) {
-    if (!mse.frame(au, showAtUs, key, size[0], size[1])) $("how").textContent = "This browser can't play the cast's video.";
+    if (!mse.frame(au, showAtUs, key, size[0], size[1], capturedUs)) $("how").textContent = "This browser can't play the cast's video.";
     return;
   }
   if (key) {
@@ -127,13 +142,17 @@ function frame(au, showAtUs, key) {
       codec = c;
       decoder = new VideoDecoder({
         output: (vf) => {
+          // Each frame's own times: its timestamp is when to show it, and `captured` keeps when it was captured.
+          const showAt = vf.timestamp, cap = captured.get(showAt) || 0;
+          captured.delete(showAt);
           const draw = () => {
             if (canvas.width !== vf.displayWidth) { canvas.width = vf.displayWidth; canvas.height = vf.displayHeight; }
             ctx.drawImage(vf, 0, 0);
             vf.close();
+            if (cap > 0) delayed(Date.now() * 1000 - cap);
           };
           // At its time on the shared clock (late frames at once).
-          const wait = showAtUs > 0 ? showAtUs / 1000 - Date.now() : 0;
+          const wait = showAt / 1000 - Date.now();
           if (wait > 0 && wait < 1000) setTimeout(draw, wait); else draw();
         },
         error: () => { decoder = null; codec = ""; call(wasm.odp_decoder_failed); },
@@ -143,8 +162,10 @@ function frame(au, showAtUs, key) {
     }
   }
   if (!decoder) return;
+  const at = showAtUs || Date.now() * 1000;
+  if (capturedUs > 0) { captured.set(at, capturedUs); if (captured.size > 120) captured.delete(captured.keys().next().value); }
   try {
-    decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: showAtUs || Date.now() * 1000, data: au }));
+    decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: at, data: au }));
   } catch {
     call(wasm.odp_decoder_failed);
   }

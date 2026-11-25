@@ -47,9 +47,10 @@ fn with(f: impl FnOnce(&mut Web)) {
                         Out::Media(b) => record(&mut o, 1, &[], &b),
                         Out::Event(e) => record(&mut o, 2, &[], e.as_bytes()),
                         Out::Audio { data, play_at_us } => record(&mut o, 4, &play_at_us.to_le_bytes(), &data),
-                        Out::Frame { data, show_at_us, key } => {
+                        Out::Frame { data, show_at_us, captured_us, key } => {
                             let mut head = show_at_us.to_le_bytes().to_vec();
                             head.push(key as u8);
+                            head.extend_from_slice(&captured_us.to_le_bytes());
                             record(&mut o, 3, &head, &data)
                         }
                     }

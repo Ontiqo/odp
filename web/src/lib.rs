@@ -23,8 +23,9 @@ pub enum Out {
     /// Something to show or keep, as JSON (`t`: pin, paired, started, stopped, cinema.*, problem; and `key` with the
     /// paired host's key to keep).
     Event(String),
-    /// An encoded frame (H.264 Annex B) and when to show it (this computer's clock, microseconds; 0: now).
-    Frame { data: Vec<u8>, show_at_us: i64, key: bool },
+    /// An encoded frame (H.264 Annex B), when to show it and when the host captured it (this computer's clock,
+    /// microseconds; 0 while the clock is being measured). The page reports its delay from capture to picture.
+    Frame { data: Vec<u8>, show_at_us: i64, captured_us: i64, key: bool },
     /// 10 ms of sound (16-bit PCM, 48 kHz stereo) and when to play it (this computer's clock; 0: now).
     Audio { data: Vec<u8>, play_at_us: i64 },
 }
@@ -309,8 +310,9 @@ impl Web {
             return;
         }
         self.need_key = false;
-        let show_at_us = self.clock.to_local(f.pts_us).map(|t| t + self.target).unwrap_or(0);
-        self.out.push(Out::Frame { data: f.data, show_at_us, key: f.key });
+        let captured_us = self.clock.to_local(f.pts_us).unwrap_or(0);
+        let show_at_us = if captured_us != 0 { captured_us + self.target } else { 0 };
+        self.out.push(Out::Frame { data: f.data, show_at_us, captured_us, key: f.key });
     }
 
     /// A clock ping to send now (once a second while a session runs).

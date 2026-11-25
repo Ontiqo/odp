@@ -59,7 +59,8 @@ const Mse = (() => {
   }
 
   /** A player on `video`; `w`/`h` are the picture's size from session.start. */
-  function create(video) {
+  function create(video, onDelay) {
+    let shown = [];
     let source = null, buffer = null, queue = [], spsKey = "", seq = 1, t0 = 0, last = 0, started = false;
     const pump = () => {
       if (!buffer || buffer.updating || !queue.length) return;
@@ -84,6 +85,11 @@ const Mse = (() => {
       if (Math.abs(off) > 0.5 || video.readyState < 2) video.currentTime = Math.max(start, Math.min(want, end - 0.02));
       else video.playbackRate = off > 0.02 ? 0.95 : off < -0.02 ? 1.05 : 1;
       if (video.paused) video.play().catch(() => {});
+      // The frame on screen now, and how long ago it was captured.
+      let i = 0;
+      while (i + 1 < shown.length && shown[i + 1][0] <= video.currentTime) i++;
+      if (shown.length && shown[i][0] <= video.currentTime && shown[i][1] > 0) onDelay(Date.now() * 1000 - shown[i][1]);
+      shown = shown.slice(i);
       // Keep the buffer short.
       if (buffer && !buffer.updating && video.currentTime > 10) {
         try { buffer.remove(0, video.currentTime - 5); } catch {}
@@ -91,7 +97,7 @@ const Mse = (() => {
     }, 250);
     return {
       /** One access unit, to show at `showAtUs` (this computer's clock; 0: now). False when it can't be played. */
-      frame(au, showAtUs, key, w, h) {
+      frame(au, showAtUs, key, w, h, capturedUs) {
         const units = nals(au);
         const sps = units.find((n) => (n[0] & 0x1f) === 7), pps = units.find((n) => (n[0] & 0x1f) === 8);
         if (key && sps && pps) {
@@ -114,12 +120,13 @@ const Mse = (() => {
         if (!t0) t0 = at - 1000000; // media time starts at 1 s
         const t = Math.max(Math.round(((at - t0) / 1e6) * 90000), last + 1);
         queue.push(fragment(seq++, t, 3000, key, data));
+        shown.push([t / 90000, capturedUs || 0]);
         last = t;
         started = true;
         pump();
         return true;
       },
-      stop() { reset(); t0 = 0; last = 0; seq = 1; },
+      stop() { reset(); t0 = 0; last = 0; seq = 1; shown = []; },
     };
   }
   return { create, nals, init, fragment };
