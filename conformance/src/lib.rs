@@ -279,6 +279,44 @@ fn caps_cinema_absent(link: &Link<TcpStream>) -> bool {
     link.peer_caps.cinema.is_empty()
 }
 
+/// Cinema against a real service (`odp-check ... --cinema URL`): opens the title at 30 s playing, pauses it at 45 s,
+/// then plays from 90 s, printing each `cinema.status`; returns the statuses as (seconds since start, position_ms,
+/// playing, error).
+pub fn cinema_follow(cfg: &Config, url: &str) -> Result<Vec<(f64, i64, bool, Option<String>)>, String> {
+    let identity = Identity::generate();
+    let id = format!("odp-check-{}", &identity.fingerprint()[..4]);
+    let me = Me { identity: &identity, id: &id, name: "ODP conformance host", caps: Caps::default() };
+    let mut link = host(TcpStream::connect(&cfg.address).map_err(|e| e.to_string())?, me, None, Some(&cfg.pin))?;
+    let started = Instant::now();
+    let mut out = Vec::new();
+    use odp::control::PlayState::{Paused, Playing};
+    let steps: [(u64, Message); 3] = [
+        (0, Message::CinemaOpen { service: "youtube".into(), url: url.into(), position_ms: 30_000, rate: 1.0, state: Playing, at_us: now_us() + 3_000_000 }),
+        (20, Message::CinemaControl { state: Paused, position_ms: 45_000, rate: 1.0, at_us: now_us() + 20_000_000 }),
+        (30, Message::CinemaControl { state: Playing, position_ms: 90_000, rate: 1.0, at_us: now_us() + 30_000_000 }),
+    ];
+    let mut next = 0;
+    let mut probe = [0u8; 1];
+    while started.elapsed() < Duration::from_secs(42) {
+        if next < steps.len() && started.elapsed() >= Duration::from_secs(steps[next].0) {
+            link.send(&steps[next].1)?;
+            next += 1;
+        }
+        let _ = link.stream().set_read_timeout(Some(Duration::from_millis(100)));
+        if matches!(link.stream().peek(&mut probe), Ok(n) if n > 0) {
+            let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));
+            if let Ok(Some(Message::CinemaStatus { position_ms, state, error, .. })) = link.recv() {
+                let t = started.elapsed().as_secs_f64();
+                println!("{t:5.1} s  {:>7} ms  {state:?}{}", position_ms, error.as_deref().map(|e| format!("  ({e})")).unwrap_or_default());
+                out.push((t, position_ms, state == Playing, error));
+            }
+        }
+    }
+    let _ = link.send(&Message::CinemaClose);
+    let _ = link.send(&Message::Bye);
+    Ok(out)
+}
+
 /// The first message `want` accepts within `time` (others are passed over).
 fn wait_for<T>(link: &mut Link<TcpStream>, time: Duration, want: impl Fn(&Message) -> Option<T>) -> Option<T> {
     let until = Instant::now() + time;

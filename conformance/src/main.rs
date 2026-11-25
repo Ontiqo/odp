@@ -1,4 +1,4 @@
-//! `odp-check <address:port> <pin> [--key SECONDS] [--seconds N]`: checks a receiver against ODP 0.1 and prints
+//! `odp-check <address:port> <pin> [--key SECONDS] [--seconds N] [--cinema URL]`: checks a receiver against ODP 0.1 and prints
 //! which levels it meets. Show a PIN on the receiver first; `--key` waits for a key pressed at the receiver.
 use std::time::Duration;
 
@@ -11,6 +11,16 @@ fn main() {
     };
     let pin: String = pin.chars().filter(char::is_ascii_digit).collect();
     let cfg = odp_check::Config { address: address.clone(), pin, key_wait: Duration::from_secs(flag("--key").unwrap_or(0)), seconds: flag("--seconds").unwrap_or(10) };
+    // --cinema URL: follow a real title on the receiver instead of the checks.
+    if let Some(url) = args.iter().position(|a| a == "--cinema").and_then(|i| args.get(i + 1)) {
+        match odp_check::cinema_follow(&cfg, url) {
+            Ok(s) => std::process::exit(if s.is_empty() { 1 } else { 0 }),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
     let report = odp_check::run(&cfg);
     print!("{}", report.text());
     std::process::exit(if report.meets(odp_check::Level::Basic) { 0 } else { 1 });
