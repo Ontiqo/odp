@@ -21,7 +21,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// The ports receivers listen on, in order (the first free one).
+/// The ports receivers try first, in order; when all are taken, any free port.
 pub const PORTS: [u16; 3] = [54330, 54331, 54332];
 
 /// How long a pairing PIN stays on screen.
@@ -31,7 +31,7 @@ pub struct Config {
     /// Where the identity key and the paired hosts are kept.
     pub dir: PathBuf,
     pub name: String,
-    /// 0: the first free of [`PORTS`].
+    /// 0: the first free of [`PORTS`], else any free port.
     pub port: u16,
     pub caps: Caps,
     /// Nobody sits at it (a TV box, a kiosk): a paired host may rename it.
@@ -117,13 +117,13 @@ pub struct Receiver {
 
 impl Receiver {
     pub fn start(cfg: Config, sink: impl Fn(Event) + Send + Sync + 'static) -> Result<Receiver, String> {
-        std::fs::create_dir_all(&cfg.dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&cfg.dir).map_err(|e| format!("can't keep this screen's files in {}: {e}", cfg.dir.display()))?;
         let key_path = cfg.dir.join("identity.key");
         let identity = match std::fs::read(&key_path).ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()) {
             Some(secret) => Identity::from_secret(&secret),
             None => {
                 let i = Identity::generate();
-                std::fs::write(&key_path, i.secret()).map_err(|e| e.to_string())?;
+                std::fs::write(&key_path, i.secret()).map_err(|e| format!("can't save this screen's key in {}: {e}", cfg.dir.display()))?;
                 i
             }
         };
@@ -133,7 +133,12 @@ impl Receiver {
         let listener = if cfg.port != 0 {
             TcpListener::bind((cfg.bind, cfg.port)).map_err(|e| e.to_string())?
         } else {
-            PORTS.iter().find_map(|p| TcpListener::bind((cfg.bind, *p)).ok()).ok_or("ports 54330-54332 are all taken")?
+            // The usual ports first (easy to type), then any free one: hosts find the screen by DNS-SD, and the
+            // screen shows its address and port for typing.
+            let mut last = None;
+            PORTS.iter().chain(&[0]).find_map(|p| TcpListener::bind((cfg.bind, *p)).map_err(|e| last = Some(e)).ok()).ok_or_else(|| {
+                format!("can't listen on any port: {}", last.map(|e| e.to_string()).unwrap_or_default())
+            })?
         };
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         let inner = Arc::new(Inner {
@@ -461,6 +466,23 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With 54330-54332 taken, a receiver still listens (on any free port), and a bad folder says what went wrong.
+    #[test]
+    fn a_receiver_listens_when_its_usual_ports_are_taken() {
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let _held: Vec<_> = PORTS.iter().filter_map(|p| TcpListener::bind((bind, *p)).ok()).collect();
+        let dir = std::env::temp_dir().join(format!("odp-receiver-ports-{}", std::process::id()));
+        let r = Receiver::start(Config { dir: dir.clone(), name: "TV".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, |_| {});
+        let port = r.as_ref().map(|r| r.port()).expect("listening");
+        assert!(port != 0 && !PORTS.contains(&port), "{port}");
+        assert!(TcpStream::connect((bind, port)).is_ok());
+        // A file where its folder should be.
+        let file = dir.join("identity.key");
+        let e = Receiver::start(Config { dir: file, name: "TV".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, |_| {}).err().unwrap();
+        assert!(e.contains("can't keep this screen's files"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A host pairs with the PIN on screen, starts a session, sends one key frame and two more, and gets a key back.
     #[test]

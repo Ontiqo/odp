@@ -36,9 +36,15 @@ pub extern "system" fn Java_app_omninput_screen_Odp_start(mut env: JNIEnv, _: JC
     let caps = env.get_string(&caps).map(String::from).ok().and_then(|c| serde_json::from_str(&c).ok()).unwrap_or_default();
     let (Ok(vm), Ok(listener)) = (env.get_java_vm(), env.new_global_ref(listener)) else { return 0 };
     let cfg = Config { dir: dir.into(), name, port: 0, caps, kiosk: kiosk != 0, bind: std::net::IpAddr::from([0, 0, 0, 0]) };
-    match Receiver::start(cfg, move |e| tell(&vm, &listener, &e)) {
+    let sink = std::sync::Arc::new(move |e: Event| tell(&vm, &listener, &e));
+    let say = sink.clone();
+    match Receiver::start(cfg, move |e| sink(e)) {
         Ok(r) => Box::into_raw(Box::new(r)) as jlong,
-        Err(_) => 0,
+        // The reason, as a `problem` event, before the app hears 0.
+        Err(e) => {
+            say(Event::Problem(e));
+            0
+        }
     }
 }
 

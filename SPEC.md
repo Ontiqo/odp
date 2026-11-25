@@ -22,7 +22,7 @@ is the set of receivers in one synced presentation.
 | Layer | What | Transport |
 |---|---|---|
 | L0 Discovery | finding receivers and hosts | DNS-SD over mDNS |
-| L1 Control | one ordered, reliable channel per session | TCP (default port 54330) |
+| L1 Control | one ordered, reliable channel per session | TCP (54330-54332 when free, else any port) |
 | L2 Pairing and keys | PIN/QR pairing, per-session keys, encryption | inside L1, then AEAD everywhere |
 | L3 Session | capabilities, start/stop, mode, layout | L1 messages |
 | L4 Media | video and audio packets with presentation times | UDP (port from L3), or the web profile |
@@ -33,6 +33,8 @@ is the set of receivers in one synced presentation.
 ### L0 Discovery
 - Receivers advertise `_odp-receiver._tcp.local` with TXT records: `v=0.1`, `id=<receiver id>`, `fp=<key fingerprint>`,
   `name=<display name>`, `paired=0|1`, `role=receiver`.
+- The SRV record gives L1's port. Receivers try 54330, 54331 and 54332 first (easy to type) and take any free port
+  when those are taken, so hosts use the advertised port, and a receiver shows its address and port for typing.
 - Hosts may advertise `_odp-host._tcp.local` (used by receivers for wake rules and to show "who can cast here").
 - Receivers may also answer a unicast `probe` on L1's port, for networks that block multicast.
 - Omninput hosts additionally see receivers in their own heartbeats (`role: "receiver"`); that is internal.

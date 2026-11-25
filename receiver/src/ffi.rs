@@ -44,7 +44,8 @@ unsafe fn text(p: *const c_char) -> Option<String> {
 }
 
 /// Starts a receiver. `dir`: where it keeps its key and paired hosts; `caps_json`: its `hello.caps` (may be null);
-/// `kiosk`: nobody sits at it, so a paired host may rename it. Returns null on failure (all ports taken).
+/// `kiosk`: nobody sits at it, so a paired host may rename it. Returns null on failure, after a `problem` event
+/// that says why.
 ///
 /// # Safety
 /// The strings must be valid C strings (or null where allowed); `callback` is called from other threads with `ctx`.
@@ -63,9 +64,14 @@ pub unsafe extern "C" fn odp_receiver_start(dir: *const c_char, name: *const c_c
         let ctx = &ctx;
         callback(ctx.0, json.as_ptr(), data, len);
     };
-    match Receiver::start(cfg, sink) {
+    let sink = std::sync::Arc::new(sink);
+    let tell = sink.clone();
+    match Receiver::start(cfg, move |e| sink(e)) {
         Ok(r) => Box::into_raw(Box::new(r)),
-        Err(_) => std::ptr::null_mut(),
+        Err(e) => {
+            tell(Event::Problem(e));
+            std::ptr::null_mut()
+        }
     }
 }
 
