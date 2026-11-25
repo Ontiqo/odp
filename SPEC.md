@@ -91,9 +91,13 @@ is the set of receivers in one synced presentation.
 - `pts_us` is on the **shared clock** (L5): the time the frame should be visible / the sample should be heard.
 - Congestion: the receiver reports loss and arrival jitter each second (`media.report`); the host adapts bitrate
   (simple delay-based control).
-- **Web profile** (TV platforms whose apps can't use UDP: webOS, Tizen, browsers): L1 over WebSocket (JSON), media as
-  fragmented MP4 over the same WebSocket for Media Source Extensions, or WebRTC with the same L2 keys as identity.
-  Higher latency (100–300 ms) and no cinema; enough for mirroring to a TV.
+- **Web profile** (TV platforms whose apps can't use UDP: webOS, Tizen, browsers): the host serves the receiver page
+  (`web/page`, with `web/` as WebAssembly) and the page connects back over a WebSocket at `/odp`. Each binary message
+  is one byte for the channel (0: L1 control bytes, exactly as on TCP; 1: one L4 datagram, exactly as on UDP, clock
+  probes included) and the bytes; L2 is unchanged, so pairing and encryption are end to end. Text messages: from the
+  host first `{"udp_port", "name"}` (the port to give in `session.ok`) and `{"t": "connected"}` when a new control
+  connection starts; from the page `{"id"}`, its receiver id. Frames decode with WebCodecs. No Cinema (a page can't
+  play another site's protected title).
 
 ### L5 Clock and sync
 - `clock.ping {t1}` / `clock.pong {t1, t2, t3}` on the UDP socket about once a second; the receiver keeps the
@@ -149,7 +153,7 @@ is the set of receivers in one synced presentation.
     session) and Apple TV (checked in the simulator: Basic, Synced, Cinema).
   - Discovery: the TV apps advertise `_odp-receiver._tcp`; Omninput hosts browse for it.
 - Not yet: calibration (`cal.*`), extended desktops (virtual displays), audio inside ODP (Omninput sends a cast's
-  sound through its own sound sharing for now), FEC, the web profile. NACK: the reference receiver asks for lost
+  sound through its own sound sharing for now), FEC. The web profile runs in browsers (Omninput serves it). NACK: the reference receiver asks for lost
   packets (`media.nack`, gaps of up to 64 in the sequence) and `odp-check` checks it.
 
 ## Open questions before 1.0
