@@ -1,0 +1,20 @@
+[package]
+name = "odp-receiver"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "The reference ODP receiver: pairing, sessions, the shared clock, frames to decode and input back, for any screen"
+repository = "https://github.com/Ontiqo/odp"
+
+[lib]
+# rlib for Rust receivers; cdylib for Android (JNI loads it); staticlib for Apple TV.
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+odp = { path = ".." }
+serde_json = "1"
+jni = { version = "0.21", optional = true }
+
+[features]
+# The Java interface the Android TV app loads (app.omninput.screen.Odp).
+android = ["dep:jni"]

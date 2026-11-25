@@ -8,6 +8,11 @@ host from it.
 - `src/`: the reference implementation in Rust (Apache-2.0): identities and fingerprints, PIN pairing, encrypted
   sessions, the shared clock, and media packets. It has no capture, codecs or windows of its own: a receiver adds its
   platform's decoder and display, a host its capture and encoder.
+- `receiver/`: the reference receiver (Apache-2.0): it listens on 54330-54332, pairs with the PIN it shows, runs a
+  session, keeps the shared clock, and hands over each frame with the moment to show it; it sends the screen's keys
+  and pointer back and passes Cinema on. A screen app adds only its decoder and window. Rust apps use it directly;
+  others through its C interface (`ffi`), and Android through its Java interface (feature `android`,
+  `app.omninput.screen.Odp`).
 
 ```
 cargo test
