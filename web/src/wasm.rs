@@ -105,6 +105,12 @@ pub extern "C" fn odp_start(name: *const u8, name_len: usize, caps: *const u8, c
     OUT.with(|o| record(&mut o.borrow_mut(), 2, &[], info.to_string().as_bytes()));
 }
 
+/// The bridge's media port for this WebSocket (it changes when the page connects again).
+#[no_mangle]
+pub extern "C" fn odp_udp_port(port: u32) {
+    with(|w| w.udp_port = port as u16);
+}
+
 /// A new WebSocket to the casting computer: the handshake starts again.
 #[no_mangle]
 pub extern "C" fn odp_connected() {

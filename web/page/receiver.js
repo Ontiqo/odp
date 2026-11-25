@@ -193,6 +193,8 @@ function connect(first) {
         if (!store.get("odp.known")) call(wasm.odp_pairing, 1);
         else showWaiting(null);
       }
+      // This connection's media port (a new one each time the page connects).
+      call(wasm.odp_udp_port, cfg.udp_port);
       // Which screen this is, so a computer it's paired with finds it at this connection.
       if (screenId) ws.send(JSON.stringify({ id: screenId }));
       return;
