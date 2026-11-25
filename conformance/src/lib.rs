@@ -170,7 +170,9 @@ pub fn run(cfg: &Config) -> Report {
 /// The media part: the test video in a loop, clock pongs, a lost frame, a replayed packet, and what comes back.
 fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr, cfg: &Config) {
     let video = frames();
-    let socket = match UdpSocket::bind(("0.0.0.0", 0)).or_else(|_| UdpSocket::bind(("127.0.0.1", 0))) {
+    // A receiver on this computer: loopback only (no firewall prompt for a test); else every interface.
+    let local: std::net::IpAddr = if target.ip().is_loopback() { [127, 0, 0, 1].into() } else { [0, 0, 0, 0].into() };
+    let socket = match UdpSocket::bind((local, 0)) {
         Ok(s) => s,
         Err(e) => return r.add(Level::Basic, "media socket", Outcome::Fail(e.to_string())),
     };
