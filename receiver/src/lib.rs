@@ -423,7 +423,13 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
                 }
                 continue;
             }
-            let Some(frame) = re.push(&buf[..n], &mut opener) else { continue };
+            let done = re.push(&buf[..n], &mut opener);
+            // Lost packets are asked for again at once (L4 media.nack): a frame can still complete in time.
+            let missing = re.take_missing();
+            if !missing.is_empty() {
+                let _ = out.send(Message::Nack { stream: 0, seqs: missing });
+            }
+            let Some(frame) = done else { continue };
             // Only a packet that opened says where the host is.
             if known != Some(from) {
                 *host.lock().unwrap() = Some(from);

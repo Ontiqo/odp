@@ -192,6 +192,9 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
     }
     let mut cinema_sent = false;
     let mut key_requests: Vec<u64> = Vec::new();
+    let mut held: Option<(u32, Vec<u8>, Instant)> = None;
+    let mut nacked: Option<Duration> = None;
+    let mut nacks: Vec<Vec<u32>> = Vec::new();
     let mut buf = vec![0u8; 2048];
     while started.elapsed() < total {
         // The video, 30 frames a second, from the key frame again after a loss.
@@ -205,6 +208,14 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
             if dropped_at.is_none() && started.elapsed() > Duration::from_secs(3) && !key && !video[(next + 1) % video.len()].0 {
                 dropped_at = Some(Instant::now());
             } else {
+                // At 2 s, one packet from the middle of a key frame is held back: the receiver should name it in a
+                // media.nack, and gets it then.
+                let mut datagrams = datagrams;
+                if held.is_none() && *key && datagrams.len() >= 3 && started.elapsed() > Duration::from_secs(2) {
+                    let d = datagrams.remove(1);
+                    let seq = odp::media::Header::parse(&d).map(|h| h.seq).unwrap_or(0);
+                    held = Some((seq, d, Instant::now()));
+                }
                 for d in datagrams {
                     if replay.is_none() {
                         replay = Some(d.clone());
@@ -247,6 +258,15 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
                     }
                 }
                 Ok(Some(Message::SyncLatency { video_us, .. })) if video_us > 0 => latency = true,
+                Ok(Some(Message::Nack { seqs, .. })) => {
+                    if let Some((seq, d, at)) = &held {
+                        if nacked.is_none() && seqs.contains(seq) {
+                            nacked = Some(at.elapsed());
+                            let _ = socket.send_to(d, target);
+                        }
+                    }
+                    nacks.push(seqs);
+                }
                 Ok(Some(Message::Key { .. })) => key_pressed = true,
                 Ok(Some(Message::CinemaStatus { .. })) => cinema = true,
                 Ok(Some(Message::Error { code, .. })) if code == "not_cinema" => cinema = true,
@@ -255,7 +275,7 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
             }
             let _ = link.stream().set_read_timeout(Some(Duration::from_millis(5)));
         }
-        if latency && pinged && asked_key.is_some() && cinema && (cfg.key_wait.is_zero() || key_pressed) && replayed {
+        if latency && pinged && asked_key.is_some() && nacked.is_some() && cinema && (cfg.key_wait.is_zero() || key_pressed) && replayed {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -269,6 +289,12 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
         (Some(d), Some(a)) if a.duration_since(d) < Duration::from_secs(2) => Outcome::Pass,
         (Some(_), Some(_)) => Outcome::Fail("asked, but more than 2 s after the loss".into()),
         _ => Outcome::Fail(format!("no session.keyframe after the loss at {} ms (requests at {key_requests:?} ms)", dropped_at.map(|d| d.duration_since(started).as_millis()).unwrap_or(0))),
+    });
+    r.add(Level::Basic, "asks for a lost packet again (media.nack)", match (&held, nacked) {
+        (Some(_), Some(t)) if t < Duration::from_millis(500) => Outcome::Pass,
+        (Some(_), Some(t)) => Outcome::Fail(format!("asked after {} ms", t.as_millis())),
+        (Some((seq, _, _)), None) => Outcome::Fail(format!("no media.nack for packet {seq} (nacks: {nacks:?})")),
+        (None, _) => Outcome::Skipped("no key frame was sent in three packets or more".into()),
     });
     r.add(Level::Basic, "ignores a replayed packet", if alive { Outcome::Pass } else { Outcome::Fail("the session ended".into()) });
     r.add(Level::Synced, "reports its delay (sync.latency)", if latency { Outcome::Pass } else { Outcome::Fail("no sync.latency".into()) });

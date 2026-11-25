@@ -149,7 +149,8 @@ is the set of receivers in one synced presentation.
     session) and Apple TV (checked in the simulator: Basic, Synced, Cinema).
   - Discovery: the TV apps advertise `_odp-receiver._tcp`; Omninput hosts browse for it.
 - Not yet: calibration (`cal.*`), extended desktops (virtual displays), audio inside ODP (Omninput sends a cast's
-  sound through its own sound sharing for now), NACK and FEC, the web profile.
+  sound through its own sound sharing for now), FEC, the web profile. NACK: the reference receiver asks for lost
+  packets (`media.nack`, gaps of up to 64 in the sequence) and `odp-check` checks it.
 
 ## Open questions before 1.0
 - Whether a cast's sound moves into L4 audio streams in 1.0 (with the latency reports that keep it in step), or stays

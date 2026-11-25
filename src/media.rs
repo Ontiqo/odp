@@ -132,6 +132,10 @@ pub struct Reassembler {
     /// Frames completed or given up, per stream: older fragments are ignored.
     last_done: HashMap<u8, u32>,
     pub dropped: u64,
+    /// The highest datagram sequence number seen, and the ones skipped since (L4 media.nack).
+    highest: Option<u32>,
+    missing: std::collections::BTreeSet<u32>,
+    new_missing: Vec<u32>,
 }
 
 struct Pending {
@@ -141,6 +145,41 @@ struct Pending {
 }
 
 impl Reassembler {
+    /// Sequence numbers skipped since the last call: the receiver asks for them again (`media.nack`). A sender's
+    /// packets are numbered in one sequence, so a gap is a lost packet (or one still on its way).
+    pub fn take_missing(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.new_missing)
+    }
+
+    fn note_seq(&mut self, seq: u32) {
+        match self.highest {
+            Some(h) if (seq.wrapping_sub(h) as i32) > 0 => {
+                let gap = seq.wrapping_sub(h).wrapping_sub(1);
+                // A long gap is an outage, not a loss to repair: the decoder asks for a key frame instead.
+                if gap <= 64 {
+                    for i in 1..=gap {
+                        let s = h.wrapping_add(i);
+                        self.missing.insert(s);
+                        self.new_missing.push(s);
+                    }
+                }
+                self.highest = Some(seq);
+                // Forget gaps far behind (their frames are done or dropped).
+                while let Some(&old) = self.missing.iter().next() {
+                    if (seq.wrapping_sub(old) as i32) > 512 {
+                        self.missing.remove(&old);
+                    } else {
+                        break;
+                    }
+                }
+            }
+            Some(_) => {
+                self.missing.remove(&seq);
+            }
+            None => self.highest = Some(seq),
+        }
+    }
+
     /// Takes one datagram; returns the frame it completes. Datagrams that don't open or parse are ignored.
     pub fn push(&mut self, datagram: &[u8], opener: &mut Opener) -> Option<Frame> {
         let h = Header::parse(datagram)?;
@@ -148,6 +187,7 @@ impl Reassembler {
             return None;
         }
         let part = opener.open(&datagram[..HEADER], &datagram[HEADER..])?;
+        self.note_seq(h.seq);
         let p = self.pending.entry((h.stream, h.frame)).or_insert_with(|| Pending { header: h, parts: vec![None; h.frag_count as usize], have: 0 });
         if p.header.frag_count != h.frag_count {
             return None;
@@ -189,6 +229,24 @@ mod tests {
         let (ho, ro) = (h.offer(), r.offer());
         let (hs, rs) = (h.sign(&hi, &ro), r.sign(&ri, &ho));
         (h.finish(&ro, &rs, None).unwrap(), r.finish(&ho, &hs, None).unwrap())
+    }
+
+    /// One packet of a three-packet frame is lost: the receiver hears which, and the frame completes when it comes
+    /// again.
+    #[test]
+    fn a_lost_packet_is_named_and_its_frame_completes_when_resent() {
+        let (mut host, mut recv) = sessions();
+        let mut p = Packetizer::new(Kind::Video, 0);
+        let data = vec![7u8; MAX_FRAGMENT * 2 + 10];
+        let d = p.frame(&data, 1, true, host.sealer(Channel::Media));
+        assert_eq!(d.len(), 3);
+        let mut re = Reassembler::default();
+        assert!(re.push(&d[0], recv.opener(Channel::Media)).is_none());
+        assert!(re.push(&d[2], recv.opener(Channel::Media)).is_none());
+        assert_eq!(re.take_missing(), vec![1]);
+        assert_eq!(re.take_missing(), Vec::<u32>::new());
+        let f = re.push(&d[1], recv.opener(Channel::Media)).expect("the frame, complete");
+        assert_eq!(f.data, data);
     }
 
     #[test]
