@@ -109,7 +109,8 @@ is the set of receivers in one synced presentation.
 - Keyboard: USB HID usage codes (page 0x07) with modifiers, not platform key codes. Key down/up go on L1 (reliable,
   ordered) so a key is never stuck.
 - Pointer: absolute position normalised to the receiver's screen (0..65535 each axis), buttons, wheel (1/120 notches),
-  on UDP with a sequence filter.
+  on UDP with a sequence filter. Each pointer or touch datagram is the event sealed on the input channel with the
+  additional data `odp input`, sent from the receiver's media socket to the address the media comes from.
 - Touch: contacts `{id, x, y, pressure?, state: down|move|up}`, up to `max_contacts`, on UDP; a lost `up` is repaired
   by the receiver resending the full contact set every 100 ms while any contact is down.
 - The host maps these onto its own input pipeline (Omninput: the existing injectors; touch becomes pointer input where
