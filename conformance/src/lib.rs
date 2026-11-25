@@ -201,7 +201,8 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
             // At 3 s, one frame is lost on purpose: the receiver should ask for a key frame.
             let datagrams = packets.frame(data, now_us(), *key, &mut sealer);
             // Lost: it takes its frame number but never arrives.
-            if dropped_at.is_none() && started.elapsed() > Duration::from_secs(3) && !key {
+            // Not just before a key frame: the receiver would rightly start again from that one without asking.
+            if dropped_at.is_none() && started.elapsed() > Duration::from_secs(3) && !key && !video[(next + 1) % video.len()].0 {
                 dropped_at = Some(Instant::now());
             } else {
                 for d in datagrams {
