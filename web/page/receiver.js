@@ -13,6 +13,10 @@ const store = {
 let wasm, mem, ws, started = false, showing = false;
 let decoder = null, codec = "", screenId = "";
 const canvas = $("picture"), ctx = canvas.getContext("2d");
+// Without WebCodecs (a page from a computer on the network isn't a secure page; many TV browsers): MSE on a <video>.
+const webcodecs = "VideoDecoder" in window;
+const mse = webcodecs ? null : Mse.create($("video"));
+let size = [1920, 1080];
 
 // USB HID usages (page 7) for KeyboardEvent.code: what ODP sends for keys.
 const HID = {};
@@ -84,12 +88,14 @@ function event(e) {
     }
     case "started":
       showing = true;
+      if (e.w && e.h) size = [e.w, e.h];
       $("waiting").style.display = "none";
       call(wasm.odp_decoder_failed);
       break;
     case "stopped":
       showing = false;
       if (decoder) { try { decoder.close(); } catch {} decoder = null; codec = ""; }
+      if (mse) mse.stop();
       showWaiting(null);
       break;
     case "problem":
@@ -110,6 +116,10 @@ function codecOf(au) {
 }
 
 function frame(au, showAtUs, key) {
+  if (mse) {
+    if (!mse.frame(au, showAtUs, key, size[0], size[1])) $("how").textContent = "This browser can't play the cast's video.";
+    return;
+  }
   if (key) {
     const c = codecOf(au);
     if (c && c !== codec) {
@@ -221,7 +231,8 @@ addEventListener("keyup", (e) => {
 });
 
 (async () => {
-  if (!("VideoDecoder" in window)) { $("how").textContent = "This browser can't decode video for ODP (no WebCodecs)."; return; }
+  if (!webcodecs && !window.MediaSource) { $("how").textContent = "This browser can't play the cast's video (no WebCodecs or Media Source)."; return; }
+  $(webcodecs ? "video" : "picture").style.display = "none";
   const env = { odp_random: (p, n) => crypto.getRandomValues(new Uint8Array(wasm.memory.buffer, p, n)) };
   const { instance } = await WebAssembly.instantiateStreaming(fetch("odp_web.wasm"), { env });
   wasm = instance.exports;
