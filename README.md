@@ -13,6 +13,11 @@ host from it.
   and pointer back and passes Cinema on. A screen app adds only its decoder and window. Rust apps use it directly;
   others through its C interface (`ffi`), and Android through its Java interface (feature `android`,
   `app.omninput.screen.Odp`).
+- `conformance/`: `odp-check`, a conformance host (Apache-2.0). Show a PIN on a receiver, then
+  `cargo run --release -p odp-check -- <address:port> <pin> [--key 10]`: it pairs (after trying a wrong PIN), comes
+  back as a paired host, casts 30 frames of H.264 colour bars in a loop, loses a frame, replays a packet, answers
+  clock pings and asks for Cinema, then prints each check and the levels the receiver meets (Basic, Synced,
+  Interactive, Cinema).
 
 ```
 cargo test

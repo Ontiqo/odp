@@ -1,0 +1,13 @@
+[package]
+name = "odp-check"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "A conformance host for ODP receivers: pairs, casts a test stream and reports which levels the receiver meets"
+repository = "https://github.com/Ontiqo/odp"
+
+[dependencies]
+odp = { path = ".." }
+
+[dev-dependencies]
+odp-receiver = { path = "../receiver" }

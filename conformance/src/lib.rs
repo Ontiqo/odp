@@ -1,0 +1,303 @@
+//! A conformance host for ODP receivers (SPEC.md, "Conformance"). It plays the host against a receiver on the
+//! network and reports each check, by level:
+//!
+//! - **Basic**: refuses a wrong PIN, pairs with the right one, takes a paired host back without a PIN, answers
+//!   `session.start`, pings the clock while media arrives, asks for a key frame after a lost frame, survives a
+//!   replayed packet.
+//! - **Synced**: reports its delay (`sync.latency`), which needs it to decode and show the frames.
+//! - **Interactive**: a key pressed at the receiver arrives as `input.key` (only when asked to wait for one).
+//! - **Cinema**: answers `cinema.open` with `cinema.status`.
+//!
+//! The video is 30 frames of H.264 colour bars (one key frame), sent in a loop at 30 frames a second.
+
+use odp::control::{Caps, Message, Mode};
+use odp::keys::Identity;
+use odp::link::{host, Link, Me};
+use odp::session::Channel;
+use std::net::{TcpStream, UdpSocket};
+use std::time::{Duration, Instant};
+
+/// The test video: each frame is a u32 big-endian length, a key byte (1: key frame) and the Annex B access unit.
+pub const BARS: &[u8] = include_bytes!("../bars.frames");
+
+pub fn frames() -> Vec<(bool, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 5 <= BARS.len() {
+        let n = u32::from_be_bytes(BARS[i..i + 4].try_into().unwrap()) as usize;
+        out.push((BARS[i + 4] == 1, BARS[i + 5..i + 5 + n].to_vec()));
+        i += 5 + n;
+    }
+    out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    Basic,
+    Synced,
+    Interactive,
+    Cinema,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Pass,
+    Fail(String),
+    Skipped(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct Check {
+    pub level: Level,
+    pub name: &'static str,
+    pub outcome: Outcome,
+}
+
+#[derive(Default, Debug)]
+pub struct Report {
+    pub checks: Vec<Check>,
+}
+
+impl Report {
+    fn add(&mut self, level: Level, name: &'static str, outcome: Outcome) {
+        self.checks.push(Check { level, name, outcome });
+    }
+
+    /// Whether every check of `level` ran and passed.
+    pub fn meets(&self, level: Level) -> bool {
+        let of: Vec<_> = self.checks.iter().filter(|c| c.level == level).collect();
+        !of.is_empty() && of.iter().all(|c| c.outcome == Outcome::Pass)
+    }
+
+    pub fn text(&self) -> String {
+        let mut s = String::new();
+        for c in &self.checks {
+            let (mark, why) = match &c.outcome {
+                Outcome::Pass => ("pass", String::new()),
+                Outcome::Fail(w) => ("FAIL", format!(": {w}")),
+                Outcome::Skipped(w) => ("skip", format!(": {w}")),
+            };
+            s.push_str(&format!("{mark}  {:<11} {}{why}\n", format!("{:?}", c.level), c.name));
+        }
+        let levels = [Level::Basic, Level::Synced, Level::Interactive, Level::Cinema];
+        let met: Vec<String> = levels.iter().filter(|l| self.meets(**l)).map(|l| format!("{l:?}")).collect();
+        s.push_str(&format!("ODP 0.1: {}\n", if met.is_empty() { "no level met".into() } else { met.join(", ") }));
+        s
+    }
+}
+
+pub struct Config {
+    /// The receiver, `address:port`.
+    pub address: String,
+    /// The PIN it shows now.
+    pub pin: String,
+    /// Wait this long for a key pressed at the receiver (0: skip the Interactive check).
+    pub key_wait: Duration,
+    /// Cast the test video this long.
+    pub seconds: u64,
+}
+
+pub fn now_us() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as i64).unwrap_or(0)
+}
+
+/// Runs every check against the receiver.
+pub fn run(cfg: &Config) -> Report {
+    let mut r = Report::default();
+    let identity = Identity::generate();
+    let id = format!("odp-check-{}", &identity.fingerprint()[..4]);
+    let me = || Me { identity: &identity, id: &id, name: "ODP conformance host", caps: Caps::default() };
+    let connect = || TcpStream::connect(&cfg.address).map_err(|e| e.to_string());
+
+    // A wrong PIN fails (the receiver locks pairing only after three).
+    let wrong = if cfg.pin == "000000" { "111111" } else { "000000" };
+    r.add(Level::Basic, "refuses a wrong PIN", match connect().and_then(|s| host(s, me(), None, Some(wrong))) {
+        Ok(_) => Outcome::Fail("paired with a wrong PIN".into()),
+        Err(_) => Outcome::Pass,
+    });
+
+    // The right PIN pairs.
+    let (key, caps) = match connect().and_then(|s| host(s, me(), None, Some(&cfg.pin))) {
+        Ok(link) => {
+            r.add(Level::Basic, "pairs with the PIN it shows", Outcome::Pass);
+            (link.peer_key, link.peer_caps.clone())
+        }
+        Err(e) => {
+            r.add(Level::Basic, "pairs with the PIN it shows", Outcome::Fail(e));
+            return r;
+        }
+    };
+    r.add(Level::Basic, "decodes H.264 (hello.caps)", if caps.decode.iter().any(|d| d.codec == "h264") { Outcome::Pass } else { Outcome::Fail("no h264 in caps.decode".into()) });
+
+    // Back as a paired host, no PIN.
+    let mut link = match connect().and_then(|s| host(s, me(), Some(key), None)) {
+        Ok(l) => {
+            r.add(Level::Basic, "takes a paired host back without a PIN", Outcome::Pass);
+            l
+        }
+        Err(e) => {
+            r.add(Level::Basic, "takes a paired host back without a PIN", Outcome::Fail(e));
+            return r;
+        }
+    };
+    let _ = link.stream().set_read_timeout(Some(Duration::from_millis(5)));
+
+    // A session.
+    if let Err(e) = link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None }) {
+        r.add(Level::Basic, "answers session.start", Outcome::Fail(e));
+        return r;
+    }
+    let udp_port = match wait_for(&mut link, Duration::from_secs(5), |m| match m {
+        Message::SessionOk { udp_port, .. } => Some(*udp_port),
+        _ => None,
+    }) {
+        Some(p) => {
+            r.add(Level::Basic, "answers session.start", Outcome::Pass);
+            p
+        }
+        None => {
+            r.add(Level::Basic, "answers session.start", Outcome::Fail("no session.ok within 5 s".into()));
+            return r;
+        }
+    };
+    let target = std::net::SocketAddr::new(link.stream().peer_addr().map(|a| a.ip()).unwrap_or([127, 0, 0, 1].into()), udp_port);
+    cast(&mut r, &mut link, target, cfg);
+    let _ = link.send(&Message::SessionStop);
+    let _ = link.send(&Message::Bye);
+    r
+}
+
+/// The media part: the test video in a loop, clock pongs, a lost frame, a replayed packet, and what comes back.
+fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr, cfg: &Config) {
+    let video = frames();
+    let socket = match UdpSocket::bind(("0.0.0.0", 0)).or_else(|_| UdpSocket::bind(("127.0.0.1", 0))) {
+        Ok(s) => s,
+        Err(e) => return r.add(Level::Basic, "media socket", Outcome::Fail(e.to_string())),
+    };
+    let _ = socket.set_nonblocking(true);
+    let (mut sealer, mut opener) = link.session.channel_keys(Channel::Media).open(Channel::Media);
+    let mut packets = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
+    let (mut pinged, mut asked_key, mut latency, mut key_pressed, mut cinema) = (false, None::<Instant>, false, false, false);
+    let mut dropped_at: Option<Instant> = None;
+    let mut replay: Option<Vec<u8>> = None;
+    let mut replayed = false;
+    let started = Instant::now();
+    let mut next = 0usize;
+    let mut tick = Instant::now();
+    let total = Duration::from_secs(cfg.seconds.max(8)) + cfg.key_wait;
+    if !cfg.key_wait.is_zero() {
+        eprintln!("Press a key on the receiver's keyboard or remote in the next {} s.", total.as_secs());
+    }
+    let mut cinema_sent = false;
+    let mut buf = vec![0u8; 2048];
+    while started.elapsed() < total {
+        // The video, 30 frames a second, from the key frame again after a loss.
+        if tick.elapsed() >= Duration::from_millis(33) {
+            tick = Instant::now();
+            let (key, data) = &video[next % video.len()];
+            // At 3 s, one frame is lost on purpose: the receiver should ask for a key frame.
+            let datagrams = packets.frame(data, now_us(), *key, &mut sealer);
+            // Lost: it takes its frame number but never arrives.
+            if dropped_at.is_none() && started.elapsed() > Duration::from_secs(3) && !key {
+                dropped_at = Some(Instant::now());
+            } else {
+                for d in datagrams {
+                    if replay.is_none() {
+                        replay = Some(d.clone());
+                    }
+                    let _ = socket.send_to(&d, target);
+                }
+            }
+            next += 1;
+            // After 5 s, an old packet again: it must be ignored, not shown nor end the session.
+            if !replayed && started.elapsed() > Duration::from_secs(5) {
+                if let Some(old) = &replay {
+                    let _ = socket.send_to(old, target);
+                }
+                replayed = true;
+            }
+            // Cinema last: a receiver may hand the screen to a film app, which would take the key check's key.
+            if !cinema_sent && started.elapsed() > Duration::from_secs(4) && (cfg.key_wait.is_zero() || key_pressed || started.elapsed() > total - Duration::from_secs(4)) {
+                let _ = link.send(&Message::CinemaOpen { service: "example.com".into(), url: "https://example.com/odp-check".into(), position_ms: 0, rate: 1.0, state: odp::control::PlayState::Paused, at_us: now_us() });
+                cinema_sent = true;
+            }
+        }
+        // Clock pings: answered at once.
+        while let Ok((n, from)) = socket.recv_from(&mut buf) {
+            if let Some(odp::clock::Probe::Ping { t1 }) = odp::clock::Probe::open(&buf[..n], &mut opener) {
+                pinged = true;
+                let t = now_us();
+                let _ = socket.send_to(&odp::clock::Probe::Pong { t1, t2: t, t3: now_us() }.seal(&mut sealer), from);
+            }
+        }
+        // Control messages back.
+        let mut probe = [0u8; 1];
+        if matches!(link.stream().peek(&mut probe), Ok(n) if n > 0) {
+            let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));
+            match link.recv() {
+                Ok(Some(Message::Keyframe)) => {
+                    if dropped_at.is_some() && asked_key.is_none() {
+                        asked_key = Some(Instant::now());
+                        next = 0; // the key frame
+                    }
+                }
+                Ok(Some(Message::SyncLatency { video_us, .. })) if video_us > 0 => latency = true,
+                Ok(Some(Message::Key { .. })) => key_pressed = true,
+                Ok(Some(Message::CinemaStatus { .. })) => cinema = true,
+                Ok(Some(Message::Error { code, .. })) if code == "not_cinema" => cinema = true,
+                Ok(None) | Err(_) => break,
+                _ => {}
+            }
+            let _ = link.stream().set_read_timeout(Some(Duration::from_millis(5)));
+        }
+        if latency && pinged && asked_key.is_some() && cinema && (cfg.key_wait.is_zero() || key_pressed) && replayed {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if cinema_sent {
+        let _ = link.send(&Message::CinemaClose);
+    }
+    let alive = link.send(&Message::SyncTarget { delay_us: 0 }).is_ok();
+    r.add(Level::Basic, "pings the clock while media arrives", if pinged { Outcome::Pass } else { Outcome::Fail("no clock.ping".into()) });
+    r.add(Level::Basic, "asks for a key frame after a lost frame", match (dropped_at, asked_key) {
+        (Some(d), Some(a)) if a.duration_since(d) < Duration::from_secs(2) => Outcome::Pass,
+        (Some(_), Some(_)) => Outcome::Fail("asked, but more than 2 s after the loss".into()),
+        _ => Outcome::Fail("no session.keyframe".into()),
+    });
+    r.add(Level::Basic, "ignores a replayed packet", if alive { Outcome::Pass } else { Outcome::Fail("the session ended".into()) });
+    r.add(Level::Synced, "reports its delay (sync.latency)", if latency { Outcome::Pass } else { Outcome::Fail("no sync.latency".into()) });
+    r.add(Level::Interactive, "a key pressed at the receiver arrives", match (cfg.key_wait.is_zero(), key_pressed) {
+        (true, _) => Outcome::Skipped("not asked to wait for a key (--key)".into()),
+        (false, true) => Outcome::Pass,
+        (false, false) => Outcome::Fail("no input.key".into()),
+    });
+    r.add(Level::Cinema, "answers cinema.open", if cinema { Outcome::Pass } else if caps_cinema_absent(link) { Outcome::Skipped("no cinema in its caps".into()) } else { Outcome::Fail("no cinema.status".into()) });
+}
+
+fn caps_cinema_absent(link: &Link<TcpStream>) -> bool {
+    link.peer_caps.cinema.is_empty()
+}
+
+/// The first message `want` accepts within `time` (others are passed over).
+fn wait_for<T>(link: &mut Link<TcpStream>, time: Duration, want: impl Fn(&Message) -> Option<T>) -> Option<T> {
+    let until = Instant::now() + time;
+    let mut probe = [0u8; 1];
+    while Instant::now() < until {
+        // Wait for a message to start (a timeout inside one would lose the framing), then read it whole.
+        let _ = link.stream().set_read_timeout(Some(Duration::from_millis(200)));
+        if !matches!(link.stream().peek(&mut probe), Ok(n) if n > 0) {
+            continue;
+        }
+        let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));
+        match link.recv() {
+            Ok(Some(m)) => {
+                if let Some(v) = want(&m) {
+                    return Some(v);
+                }
+            }
+            _ => return None,
+        }
+    }
+    None
+}
