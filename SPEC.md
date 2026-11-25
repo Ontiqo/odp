@@ -58,7 +58,9 @@ is the set of receivers in one synced presentation.
   `pair.start`, receiver `pair.start`, host `pair.confirm`, receiver `pair.confirm`; then each side's `session.offer`
   (ephemeral and identity key, no signature), then each side's `session.offer` again with its signature over both
   offers (byte strings in JSON are standard base64). Everything after is sealed. A receiver not showing a PIN answers
-  an unknown host's `pair.start` with `error {code: "not_pairing"}`.
+  an unknown host's `pair.start` with `error {code: "not_pairing"}`. The receiver reads the host's first message
+  before sending its own `session.offer`: a host it knows may send `pair.start` instead (it lost its keys), and while
+  a PIN is shown pairing again replaces the stored key.
 - **Every session:** an X25519 ephemeral exchange, signed by both identity keys, then HKDF-SHA-256 derives separate keys
   for control, media and input in each direction (HKDF-SHA-256, salt = the signed transcript, info `odp/0.1 h2r media`
   and so on). All L1 messages after the exchange and all UDP packets are sealed with **ChaCha20-Poly1305**: a sealed

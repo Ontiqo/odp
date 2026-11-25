@@ -107,7 +107,7 @@ pub fn host<S: Read + Write>(mut stream: S, me: Me<'_>, known: Option<[u8; 32]>,
             p.accept(&unb64(&sealed).ok_or("malformed pairing")?)?
         }
     };
-    let link = exchange(&mut stream, Role::Host, me.identity, Some(expected))?;
+    let link = exchange(&mut stream, Role::Host, me.identity, Some(expected), None)?;
     Ok(Link { stream, session: link, peer_id: id, peer_name: name, peer_caps: caps, peer_key: expected })
 }
 
@@ -123,12 +123,10 @@ pub struct ReceiverPolicy<'a> {
 pub fn receiver<S: Read + Write>(mut stream: S, me: Me<'_>, policy: ReceiverPolicy<'_>) -> Result<Link<S>, String> {
     let Message::Hello { id, name, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
     send_plain(&mut stream, &Message::Hello { versions: vec![crate::VERSION.into()], id: me.id.into(), name: me.name.into(), role: "receiver".into(), caps: me.caps })?;
-    let expected = match (policy.paired)(&id) {
-        Some(k) => Some(k),
-        None => {
-            // The host starts pairing; without a PIN on screen there's nothing to pair with.
-            let first = recv_plain(&mut stream)?;
-            let Message::PairStart { spake } = first else { return Err("an unpaired host that didn't start pairing".into()) };
+    // The host either starts pairing or, when it knows this receiver, offers a session. A host this receiver knows
+    // may pair again (it lost its keys) while a PIN is on screen: the new key replaces the stored one.
+    let (expected, offer) = match recv_plain(&mut stream)? {
+        Message::PairStart { spake } => {
             let Some(pin) = policy.pin else {
                 let _ = send_plain(&mut stream, &Message::Error { id: None, code: "not_pairing".into(), text: "this screen isn't pairing now".into() });
                 return Err("not pairing".into());
@@ -139,15 +137,21 @@ pub fn receiver<S: Read + Write>(mut stream: S, me: Me<'_>, policy: ReceiverPoli
             let Message::PairConfirm { sealed } = recv_plain(&mut stream)? else { return Err("expected pair.confirm".into()) };
             let host_key = p.accept(&unb64(&sealed).ok_or("malformed pairing")?)?;
             send_plain(&mut stream, &Message::PairConfirm { sealed: b64(&p.confirm(me.identity)?) })?;
-            Some(host_key)
+            (host_key, None)
         }
+        offer @ Message::SessionOffer { .. } => match (policy.paired)(&id) {
+            Some(k) => (k, Some(offer)),
+            None => return Err("an unpaired host that didn't start pairing".into()),
+        },
+        _ => return Err("expected pair.start or session.offer".into()),
     };
-    let session = exchange(&mut stream, Role::Receiver, me.identity, expected)?;
+    let session = exchange(&mut stream, Role::Receiver, me.identity, Some(expected), offer)?;
     let peer_key = session.peer;
     Ok(Link { stream, session, peer_id: id, peer_name: name, peer_caps: Caps::default(), peer_key })
 }
 
-fn exchange<S: Read + Write>(stream: &mut S, role: Role, me: &Identity, expected: Option<[u8; 32]>) -> Result<Session, String> {
+/// The session exchange; `offer` is the other side's first `session.offer` when it was already read.
+fn exchange<S: Read + Write>(stream: &mut S, role: Role, me: &Identity, expected: Option<[u8; 32]>, offer: Option<Message>) -> Result<Session, String> {
     let hs = Handshake::start(role, me);
     let mine = hs.offer();
     let send_offer = |stream: &mut S, sig: Option<[u8; 64]>| {
@@ -155,7 +159,11 @@ fn exchange<S: Read + Write>(stream: &mut S, role: Role, me: &Identity, expected
     };
     // Offers first (no signature yet: each signature covers both offers), then the signatures.
     send_offer(stream, None)?;
-    let Message::SessionOffer { ephemeral, identity, .. } = recv_plain(stream)? else { return Err("expected session.offer".into()) };
+    let first = match offer {
+        Some(m) => m,
+        None => recv_plain(stream)?,
+    };
+    let Message::SessionOffer { ephemeral, identity, .. } = first else { return Err("expected session.offer".into()) };
     let theirs = Offer { ephemeral: key32(&ephemeral)?, identity: key32(&identity)? };
     send_offer(stream, Some(hs.sign(me, &theirs)))?;
     let Message::SessionOffer { signature, .. } = recv_plain(stream)? else { return Err("expected the signed session.offer".into()) };
@@ -232,6 +240,28 @@ mod tests {
         again.send(&Message::SyncOffset { us: 1 }).unwrap();
         assert_eq!(again.recv().unwrap(), Some(Message::Keyframe));
         assert_eq!(receiver_side.join().unwrap(), host_pub);
+    }
+
+    /// A host the receiver knows lost its keys (reinstalled): it pairs again while the PIN is shown, and its new key
+    /// replaces the old one; with no PIN on screen it is refused.
+    #[test]
+    fn a_known_host_with_a_new_key_pairs_again_only_with_the_pin() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let recv_id = Identity::generate();
+        let old_key = Identity::generate().public();
+        let receiver_side = std::thread::spawn(move || {
+            let known = move |_: &str| Some(old_key);
+            let (s, _) = listener.accept().unwrap();
+            assert!(receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &known, pin: None }).is_err());
+            let (s, _) = listener.accept().unwrap();
+            receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &known, pin: Some("654321".into()) }).unwrap().peer_key
+        });
+        let new_host = Identity::generate();
+        assert!(host(TcpStream::connect(addr).unwrap(), me(&new_host, "laptop"), None, Some("654321")).is_err());
+        let link = host(TcpStream::connect(addr).unwrap(), me(&new_host, "laptop"), None, Some("654321")).unwrap();
+        drop(link);
+        assert_eq!(receiver_side.join().unwrap(), new_host.public());
     }
 
     #[test]

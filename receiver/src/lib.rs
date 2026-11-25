@@ -266,7 +266,9 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     };
     {
         let mut hosts = inner.hosts.lock().unwrap();
-        if !hosts.iter().any(|h| h.id == link.peer_id) {
+        // New, or a known host that paired again with a new key (it lost its keys).
+        if !hosts.iter().any(|h| h.id == link.peer_id && h.key == link.peer_key) {
+            hosts.retain(|h| h.id != link.peer_id);
             hosts.push(Host { id: link.peer_id.clone(), name: link.peer_name.clone(), key: link.peer_key });
             save_hosts(&inner.cfg.dir, &hosts);
             *inner.pin.lock().unwrap() = None;
