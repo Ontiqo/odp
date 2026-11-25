@@ -257,20 +257,24 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let hosts = inner.hosts.lock().unwrap().clone();
     let pin = inner.pin.lock().unwrap().clone().filter(|(_, t)| t.elapsed() < PIN_LIFE).map(|(p, _)| p);
-    let paired = move |id: &str| hosts.iter().find(|h| h.id == id).map(|h| h.key);
+    let paired = |id: &str| hosts.iter().find(|h| h.id == id).map(|h| h.key);
+    let paired_before = |id: &str, key: &[u8; 32]| hosts.iter().any(|h| h.id == id && h.key == *key);
     let name = inner.name.lock().unwrap().clone();
     let me = odp::link::Me { identity: &inner.identity, id: &inner.id, name: &name, caps: inner.cfg.caps.clone() };
-    let mut link = match odp::link::receiver(stream, me, odp::link::ReceiverPolicy { paired: &paired, pin }) {
+    // A new host is stored the moment pairing succeeds (before the session exchange), so it can reconnect at once.
+    let stored = |id: &str, name: &str, key: &[u8; 32]| {
+        let mut hosts = inner.hosts.lock().unwrap();
+        hosts.retain(|h| h.id != id);
+        hosts.push(Host { id: id.to_string(), name: name.to_string(), key: *key });
+        save_hosts(&inner.cfg.dir, &hosts);
+    };
+    let mut link = match odp::link::receiver(stream, me, odp::link::ReceiverPolicy { paired: &paired, pin, on_paired: Some(&stored) }) {
         Ok(l) => l,
         Err(e) => return (inner.sink)(Event::Problem(format!("A computer at {from} couldn't connect: {e}"))),
     };
     {
-        let mut hosts = inner.hosts.lock().unwrap();
-        // New, or a known host that paired again with a new key (it lost its keys).
-        if !hosts.iter().any(|h| h.id == link.peer_id && h.key == link.peer_key) {
-            hosts.retain(|h| h.id != link.peer_id);
-            hosts.push(Host { id: link.peer_id.clone(), name: link.peer_name.clone(), key: link.peer_key });
-            save_hosts(&inner.cfg.dir, &hosts);
+        // Paired just now (stored when pairing succeeded): the PIN goes.
+        if inner.pin.lock().unwrap().is_some() && !paired_before(&link.peer_id, &link.peer_key) {
             *inner.pin.lock().unwrap() = None;
             (inner.sink)(Event::Pin(None));
             (inner.sink)(Event::Paired { host: link.peer_name.clone() });

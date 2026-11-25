@@ -117,6 +117,9 @@ pub struct ReceiverPolicy<'a> {
     pub paired: &'a dyn Fn(&str) -> Option<[u8; 32]>,
     /// The PIN shown now, if pairing is open (None: refuse unknown hosts).
     pub pin: Option<String>,
+    /// Called with the host's id, name and key as soon as pairing succeeds, before the session exchange: a receiver
+    /// stores the host here, so a host that reconnects at once is already known.
+    pub on_paired: Option<&'a dyn Fn(&str, &str, &[u8; 32])>,
 }
 
 /// The receiver's side.
@@ -136,6 +139,9 @@ pub fn receiver<S: Read + Write>(mut stream: S, me: Me<'_>, policy: ReceiverPoli
             p.receive(&unb64(&spake).ok_or("malformed pairing")?)?;
             let Message::PairConfirm { sealed } = recv_plain(&mut stream)? else { return Err("expected pair.confirm".into()) };
             let host_key = p.accept(&unb64(&sealed).ok_or("malformed pairing")?)?;
+            if let Some(stored) = policy.on_paired {
+                stored(&id, &name, &host_key);
+            }
             send_plain(&mut stream, &Message::PairConfirm { sealed: b64(&p.confirm(me.identity)?) })?;
             (host_key, None)
         }
@@ -223,7 +229,7 @@ mod tests {
                 let known = stored;
                 let paired = move |_: &str| known;
                 let pin = if round == 0 { Some("123456".to_string()) } else { None };
-                let mut link = receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &paired, pin }).unwrap();
+                let mut link = receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &paired, pin, on_paired: None }).unwrap();
                 stored = Some(link.peer_key);
                 assert_eq!(link.recv().unwrap(), Some(Message::SyncOffset { us: round }));
                 link.send(&Message::Keyframe).unwrap();
@@ -253,9 +259,9 @@ mod tests {
         let receiver_side = std::thread::spawn(move || {
             let known = move |_: &str| Some(old_key);
             let (s, _) = listener.accept().unwrap();
-            assert!(receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &known, pin: None }).is_err());
+            assert!(receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &known, pin: None, on_paired: None }).is_err());
             let (s, _) = listener.accept().unwrap();
-            receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &known, pin: Some("654321".into()) }).unwrap().peer_key
+            receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &known, pin: Some("654321".into()), on_paired: None }).unwrap().peer_key
         });
         let new_host = Identity::generate();
         assert!(host(TcpStream::connect(addr).unwrap(), me(&new_host, "laptop"), None, Some("654321")).is_err());
@@ -272,9 +278,9 @@ mod tests {
         let receiver_side = std::thread::spawn(move || {
             let none = |_: &str| None;
             let (s, _) = listener.accept().unwrap();
-            let wrong = receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &none, pin: Some("111111".into()) }).err();
+            let wrong = receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &none, pin: Some("111111".into()), on_paired: None }).err();
             let (s, _) = listener.accept().unwrap();
-            let closed = receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &none, pin: None }).err();
+            let closed = receiver(s, me(&recv_id, "screen"), ReceiverPolicy { paired: &none, pin: None, on_paired: None }).err();
             (wrong, closed)
         });
         let host_id = Identity::generate();
