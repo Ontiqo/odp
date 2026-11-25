@@ -104,6 +104,8 @@ struct Inner {
     offset: Arc<Mutex<Option<i64>>>,
     /// The group's delay from capture to picture (sync.target).
     target: Arc<AtomicI64>,
+    /// How much later than the group's time this screen plays its sound (sync.offset: the host tuned the room).
+    sound_offset: Arc<AtomicI64>,
     /// The decoder failed: wait for a key frame.
     spoiled: Arc<AtomicBool>,
 }
@@ -153,6 +155,7 @@ impl Receiver {
             media: Mutex::new(None),
             offset: Arc::new(Mutex::new(None)),
             target: Arc::new(AtomicI64::new(0)),
+            sound_offset: Arc::new(AtomicI64::new(0)),
             spoiled: Arc::new(AtomicBool::new(false)),
         });
         (inner.sink)(Event::Listening { port, fingerprint: inner.identity.fingerprint() });
@@ -337,6 +340,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 }
             }
             Ok(Some(Message::SyncTarget { delay_us })) => inner.target.store(delay_us, Ordering::SeqCst),
+            Ok(Some(Message::SyncOffset { us })) => inner.sound_offset.store(us.clamp(-500_000, 500_000), Ordering::SeqCst),
             Ok(Some(Message::Rename { name })) => {
                 if inner.cfg.kiosk {
                     let name: String = name.trim().chars().take(64).collect();
@@ -408,6 +412,7 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
         *inner.media.lock().unwrap() = Some(Media { socket: clone, input: input.open(Channel::Input).0, host: host.clone() });
     }
     let (sink, offset, target, spoiled) = (inner.sink.clone(), inner.offset.clone(), inner.target.clone(), inner.spoiled.clone());
+    let sound_offset = inner.sound_offset.clone();
     *offset.lock().unwrap() = None;
     std::thread::spawn(move || {
         let (mut pinger, mut opener) = media.open(Channel::Media);
@@ -444,7 +449,7 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
             }
             if frame.kind == odp::media::Kind::Audio {
                 let captured = clock.to_local(frame.pts_us).unwrap_or(0);
-                let play_at_us = if captured > 0 { captured + target.load(Ordering::SeqCst) } else { 0 };
+                let play_at_us = if captured > 0 { captured + target.load(Ordering::SeqCst) + sound_offset.load(Ordering::SeqCst) } else { 0 };
                 sink(Event::Audio { data: frame.data, play_at_us });
                 continue;
             }
