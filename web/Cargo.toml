@@ -1,0 +1,14 @@
+[package]
+name = "odp-web"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "An ODP receiver for browsers (the web profile): pairing, sessions, the clock and frames, sans I/O, as WebAssembly"
+repository = "https://github.com/Ontiqo/odp"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+odp = { path = ".." }
+serde_json = "1"

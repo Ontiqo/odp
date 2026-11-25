@@ -26,7 +26,8 @@ pub struct Link<S: Read + Write> {
     pub peer_key: [u8; 32],
 }
 
-fn b64(bytes: &[u8]) -> String {
+/// Standard base64, as byte strings travel in L1 JSON.
+pub fn b64(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for c in bytes.chunks(3) {
@@ -42,7 +43,7 @@ fn b64(bytes: &[u8]) -> String {
     out
 }
 
-fn unb64(s: &str) -> Option<Vec<u8>> {
+pub fn unb64(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut acc = 0u32;
     let mut bits = 0;
