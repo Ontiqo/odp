@@ -54,6 +54,11 @@ is the set of receivers in one synced presentation.
   30 s after 3 failures.
 - **Pairing with a QR code:** the QR carries `odp://pair?id=…&fp=…&pin=…`; scanning it on the host pins the
   fingerprint as well as supplying the PIN.
+- **Order on a new connection** (framed JSON, before encryption): host `hello`, receiver `hello`; when pairing, host
+  `pair.start`, receiver `pair.start`, host `pair.confirm`, receiver `pair.confirm`; then each side's `session.offer`
+  (ephemeral and identity key, no signature), then each side's `session.offer` again with its signature over both
+  offers (byte strings in JSON are standard base64). Everything after is sealed. A receiver not showing a PIN answers
+  an unknown host's `pair.start` with `error {code: "not_pairing"}`.
 - **Every session:** an X25519 ephemeral exchange, signed by both identity keys, then HKDF-SHA-256 derives separate keys
   for control, media and input in each direction (HKDF-SHA-256, salt = the signed transcript, info `odp/0.1 h2r media`
   and so on). All L1 messages after the exchange and all UDP packets are sealed with **ChaCha20-Poly1305**: a sealed

@@ -9,11 +9,13 @@
 //! - [`media`]: media datagrams, fragmentation and reassembly (L4)
 //! - [`control`]: the control channel's framing and messages (L1, L3, L5, L7)
 //! - [`input`]: pointer and touch from a receiver (L6)
+//! - [`link`]: the handshake over a byte stream, pairing included, and the encrypted control link (L1, L2)
 
 pub mod clock;
 pub mod control;
 pub mod input;
 pub mod keys;
+pub mod link;
 pub mod media;
 pub mod pair;
 pub mod session;
