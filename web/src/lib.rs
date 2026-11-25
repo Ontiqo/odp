@@ -25,6 +25,8 @@ pub enum Out {
     Event(String),
     /// An encoded frame (H.264 Annex B) and when to show it (this computer's clock, microseconds; 0: now).
     Frame { data: Vec<u8>, show_at_us: i64, key: bool },
+    /// 10 ms of sound (16-bit PCM, 48 kHz stereo) and when to play it (this computer's clock; 0: now).
+    Audio { data: Vec<u8>, play_at_us: i64 },
 }
 
 enum State {
@@ -292,7 +294,9 @@ impl Web {
             self.send(&Message::Nack { stream: 0, seqs: missing });
         }
         let Some(f) = done else { return };
-        if f.kind != odp::media::Kind::Video {
+        if f.kind == odp::media::Kind::Audio {
+            let play_at_us = self.clock.to_local(f.pts_us).map(|t| t + self.target).unwrap_or(0);
+            self.out.push(Out::Audio { data: f.data, play_at_us });
             return;
         }
         // After a gap (or at the start) only a key frame may go to the decoder; ask for one.

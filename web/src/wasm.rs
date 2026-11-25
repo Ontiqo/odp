@@ -1,7 +1,7 @@
 //! The receiver for JavaScript, as plain exports over the module's memory (no generated glue): the page writes
 //! input with `odp_alloc`, calls a function, then reads the output buffer `odp_out` gives (`odp_out_len` bytes):
-//! records of kind (u8: 0 control bytes, 1 media datagram, 2 event JSON, 3 frame), length (u32 LE), and for a frame
-//! show_at_us (i64 LE) and key (u8) before the data. `web/page/receiver.js` is that glue.
+//! records of kind (u8: 0 control bytes, 1 media datagram, 2 event JSON, 3 frame, 4 sound), length (u32 LE), and
+//! for a frame show_at_us (i64 LE) and key (u8), for sound play_at_us (i64 LE), before the data. `web/page/receiver.js` is that glue.
 
 use crate::{Out, Web};
 use std::cell::RefCell;
@@ -46,6 +46,7 @@ fn with(f: impl FnOnce(&mut Web)) {
                         Out::Control(b) => record(&mut o, 0, &[], &b),
                         Out::Media(b) => record(&mut o, 1, &[], &b),
                         Out::Event(e) => record(&mut o, 2, &[], e.as_bytes()),
+                        Out::Audio { data, play_at_us } => record(&mut o, 4, &play_at_us.to_le_bytes(), &data),
                         Out::Frame { data, show_at_us, key } => {
                             let mut head = show_at_us.to_le_bytes().to_vec();
                             head.push(key as u8);

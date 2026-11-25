@@ -42,6 +42,7 @@ function call(fn, ...args) {
     if (kind === 0 || kind === 1) send(kind, body);
     else if (kind === 2) event(JSON.parse(new TextDecoder().decode(body)));
     else if (kind === 3) frame(body.subarray(9), Number(new DataView(body.buffer, body.byteOffset).getBigInt64(0, true)), body[8] === 1);
+    else if (kind === 4) sound(body.subarray(8), Number(new DataView(body.buffer, body.byteOffset).getBigInt64(0, true)));
   }
 }
 
@@ -139,6 +140,32 @@ function frame(au, showAtUs, key) {
   }
 }
 
+// The cast's sound (16-bit PCM, 48 kHz stereo, 10 ms a frame), each frame at its time. Browsers allow sound only
+// after a key press or a click, which starts it.
+let audio = null, audioNext = 0;
+function startSound() {
+  if (!audio) audio = new AudioContext({ sampleRate: 48000 });
+  if (audio.state !== "running") audio.resume();
+}
+addEventListener("click", startSound);
+function sound(pcm, playAtUs) {
+  if (!audio || audio.state !== "running") return;
+  const n = pcm.length / 4;
+  const buf = audio.createBuffer(2, n, 48000);
+  const l = buf.getChannelData(0), r = buf.getChannelData(1);
+  const dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.length);
+  for (let i = 0; i < n; i++) { l[i] = dv.getInt16(i * 4, true) / 32768; r[i] = dv.getInt16(i * 4 + 2, true) / 32768; }
+  const ahead = playAtUs > 0 ? (playAtUs / 1000 - Date.now()) / 1000 : 0.04;
+  if (ahead < -0.1) return; // too late to be in step
+  let when = audio.currentTime + Math.max(ahead, 0);
+  if (when < audioNext && audioNext - when < 0.05) when = audioNext; // back to back, no clicks
+  const src = audio.createBufferSource();
+  src.buffer = buf;
+  src.connect(audio.destination);
+  src.start(when);
+  audioNext = when + n / 48000;
+}
+
 function connect(first) {
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/odp");
   ws.binaryType = "arraybuffer";
@@ -156,7 +183,7 @@ function connect(first) {
         started = true;
         const name = store.get("odp.name") || cfg.name || "Browser";
         $("name").textContent = name;
-        const caps = { decode: [{ codec: "h264", max_w: 1920, max_h: 1080, max_fps: 60, hw: true }], keyboard: true };
+        const caps = { decode: [{ codec: "h264", max_w: 1920, max_h: 1080, max_fps: 60, hw: true }], keyboard: true, audio_channels: 2 };
         const secret = store.get("odp.secret");
         const s = secret ? Uint8Array.from(atob(secret), (c) => c.charCodeAt(0)) : new Uint8Array(0);
         const enc = new TextEncoder();
@@ -178,6 +205,7 @@ function connect(first) {
 }
 
 addEventListener("keydown", (e) => {
+  startSound();
   if (!showing) {
     if (e.code === "Enter" || e.keyCode === 13) call(wasm.odp_pairing, 1);
     return;
