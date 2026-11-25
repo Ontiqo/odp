@@ -94,6 +94,9 @@ pub enum Message {
     Keyframe,
     #[serde(rename = "session.stop")]
     SessionStop,
+    /// A paired host names a device that has nobody at it (a kiosk); a device with its own owner answers with an error.
+    #[serde(rename = "device.rename")]
+    Rename { name: String },
     #[serde(rename = "media.nack")]
     Nack { stream: u8, seqs: Vec<u32> },
     #[serde(rename = "media.report")]
@@ -195,5 +198,13 @@ mod tests {
         assert_eq!(read_frame(&mut &[][..]).unwrap(), None);
         let big = ((MAX_MESSAGE + 1) as u32).to_be_bytes();
         assert!(read_frame(&mut &big[..]).is_err());
+    }
+
+    #[test]
+    fn a_rename_round_trips() {
+        let m = Message::Rename { name: "Living room TV".into() };
+        let j = m.to_json();
+        assert!(String::from_utf8_lossy(&j).contains("\"t\":\"device.rename\""));
+        assert_eq!(Message::from_json(&j).unwrap(), m);
     }
 }

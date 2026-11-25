@@ -75,6 +75,8 @@ is the set of receivers in one synced presentation.
 - `session.start {mode: mirror|extend|cinema, video{codec, w, h, fps, bitrate}, audio{codec, rate, channels},
   udp_port, group}` → `session.ok {udp_port}`.
 - `session.update` (resolution, bitrate, cadence 24/30/60, group membership), `session.pause`, `session.stop`.
+- `device.rename {name}`: a paired host names a device nobody sits at (a kiosk, a TV box); a device with its own
+  owner answers `error` and keeps its name.
 - `session.layout {screen_id, w_mm, h_mm}` lets the host place the receiver in its screen layout.
 
 ### L4 Media
