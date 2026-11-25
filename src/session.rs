@@ -113,10 +113,13 @@ impl Handshake {
             Role::Host => ("h2r", "r2h"),
             Role::Receiver => ("r2h", "h2r"),
         };
+        let send_keys = [Channel::Control, Channel::Media, Channel::Input].map(|c| key(send_dir, c));
+        let recv_keys = [Channel::Control, Channel::Media, Channel::Input].map(|c| key(recv_dir, c));
         Ok(Session {
             peer: theirs.identity,
             send: [Channel::Control, Channel::Media, Channel::Input].map(|c| Sealer::new(key(send_dir, c), c)),
             recv: [Channel::Control, Channel::Media, Channel::Input].map(|c| Opener::new(key(recv_dir, c), c)),
+            keys: (send_keys, recv_keys),
         })
     }
 }
@@ -126,6 +129,38 @@ pub struct Session {
     pub peer: [u8; 32],
     send: [Sealer; 3],
     recv: [Opener; 3],
+    keys: ([[u8; 32]; 3], [[u8; 32]; 3]),
+}
+
+/// One channel's keys in both directions, to hand to another process of the same device (a media helper) over a
+/// private pipe, so it can seal and open that channel without a handshake of its own. The two processes must not both
+/// seal with them: the counters would repeat.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelKeys {
+    pub channel_send: [u8; 32],
+    pub channel_recv: [u8; 32],
+}
+
+impl ChannelKeys {
+    /// A sealer and an opener for `c` from handed-over keys (in the helper process).
+    pub fn open(&self, c: Channel) -> (Sealer, Opener) {
+        (Sealer::new(self.channel_send, c), Opener::new(self.channel_recv, c))
+    }
+
+    /// As 128 hex digits (send, then receive), for the pipe.
+    pub fn to_hex(&self) -> String {
+        self.channel_send.iter().chain(self.channel_recv.iter()).map(|b| format!("{b:02x}")).collect()
+    }
+
+    pub fn from_hex(s: &str) -> Option<ChannelKeys> {
+        let s = s.trim();
+        if s.len() != 128 {
+            return None;
+        }
+        let bytes: Option<Vec<u8>> = (0..128).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect();
+        let bytes = bytes?;
+        Some(ChannelKeys { channel_send: bytes[..32].try_into().ok()?, channel_recv: bytes[32..].try_into().ok()? })
+    }
 }
 
 fn index(c: Channel) -> usize {
@@ -142,6 +177,11 @@ impl Session {
     }
     pub fn opener(&mut self, c: Channel) -> &mut Opener {
         &mut self.recv[index(c)]
+    }
+
+    /// One channel's keys, to hand to a helper process of this device (see [`ChannelKeys`]).
+    pub fn channel_keys(&self, c: Channel) -> ChannelKeys {
+        ChannelKeys { channel_send: self.keys.0[index(c)], channel_recv: self.keys.1[index(c)] }
     }
 }
 
@@ -259,6 +299,16 @@ mod tests {
         assert_eq!(Handshake::start(Role::Host, &hi).finish(&ro, &rs, Some(&other.public())).err(), Some("the other side isn't the device paired with"));
         let forged = other.sign(b"anything");
         assert_eq!(h.finish(&ro, &forged, None).err(), Some("the other side's signature doesn't verify"));
+    }
+
+    #[test]
+    fn a_helper_process_can_use_a_channel_from_handed_over_keys() {
+        let (host, mut receiver, _, _) = pair();
+        let keys = ChannelKeys::from_hex(&host.channel_keys(Channel::Media).to_hex()).unwrap();
+        let (mut sealer, _) = keys.open(Channel::Media);
+        let s = sealer.seal(b"h", b"frame from the helper");
+        assert_eq!(receiver.opener(Channel::Media).open(b"h", &s).unwrap(), b"frame from the helper");
+        assert!(ChannelKeys::from_hex("zz").is_none());
     }
 
     #[test]
