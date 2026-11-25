@@ -145,8 +145,9 @@ struct Pending {
 }
 
 impl Reassembler {
-    /// Sequence numbers skipped since the last call: the receiver asks for them again (`media.nack`). A sender's
-    /// packets are numbered in one sequence, so a gap is a lost packet (or one still on its way).
+    /// Sequence numbers of stream 0 (video) skipped since the last call: the receiver asks for them again
+    /// (`media.nack {stream: 0}`). A sender numbers each stream's packets in one sequence, so a gap is a lost packet
+    /// (or one still on its way).
     pub fn take_missing(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.new_missing)
     }
@@ -187,7 +188,10 @@ impl Reassembler {
             return None;
         }
         let part = opener.open(&datagram[..HEADER], &datagram[HEADER..])?;
-        self.note_seq(h.seq);
+        // Video only (stream 0): a lost 10 ms of sound is skipped, not asked for, and each stream counts on its own.
+        if h.stream == 0 {
+            self.note_seq(h.seq);
+        }
         let p = self.pending.entry((h.stream, h.frame)).or_insert_with(|| Pending { header: h, parts: vec![None; h.frag_count as usize], have: 0 });
         if p.header.frag_count != h.frag_count {
             return None;

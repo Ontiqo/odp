@@ -19,7 +19,7 @@ fn tell(vm: &JavaVM, listener: &GlobalRef, e: &Event) {
     let _ = env.with_local_frame(8, |env| -> jni::errors::Result<()> {
         let json = env.new_string(event_json(e).to_string())?;
         let data = match e {
-            Event::Frame { data, .. } => JObject::from(env.byte_array_from_slice(data)?),
+            Event::Frame { data, .. } | Event::Audio { data, .. } => JObject::from(env.byte_array_from_slice(data)?),
             _ => JObject::null(),
         };
         env.call_method(listener.as_obj(), "onEvent", "(Ljava/lang/String;[B)V", &[JValue::Object(&json), JValue::Object(&data)])?;

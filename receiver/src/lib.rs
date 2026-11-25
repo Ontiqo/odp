@@ -54,6 +54,9 @@ pub enum Event {
     /// since 1970; 0 while the clock is still being measured: show it now). `captured_us` is when the host captured
     /// it, on this clock (0 until measured): a screen reports its delay from there to its picture with `latency`.
     Frame { data: Vec<u8>, show_at_us: i64, captured_us: i64, key: bool },
+    /// 10 ms of sound, 16-bit PCM, 48 kHz stereo (odp L4 PCM on a LAN), to play at `play_at_us` on this computer's
+    /// clock (0 while the clock is being measured: play it now). Only to screens whose caps say they play sound.
+    Audio { data: Vec<u8>, play_at_us: i64 },
     Stopped { host: String },
     /// A paired host named this screen.
     Renamed { name: String },
@@ -434,7 +437,10 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
             if known != Some(from) {
                 *host.lock().unwrap() = Some(from);
             }
-            if frame.kind != odp::media::Kind::Video {
+            if frame.kind == odp::media::Kind::Audio {
+                let captured = clock.to_local(frame.pts_us).unwrap_or(0);
+                let play_at_us = if captured > 0 { captured + target.load(Ordering::SeqCst) } else { 0 };
+                sink(Event::Audio { data: frame.data, play_at_us });
                 continue;
             }
             if spoiled.swap(false, Ordering::SeqCst) {
@@ -506,6 +512,19 @@ mod tests {
             }
         }
         assert_eq!(frames, vec![(0, true), (1, false), (2, false)]);
+        // Sound on its own stream comes through as audio.
+        let mut sound = odp::media::Packetizer::new(odp::media::Kind::Audio, 1);
+        for d in sound.frame(&[1u8; 1920], now_us(), false, &mut sealer) {
+            udp.send_to(&d, ("127.0.0.1", udp_port)).unwrap();
+        }
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut heard = false;
+        while !heard && Instant::now() < until {
+            if let Ok(Event::Audio { data, .. }) = rx.recv_timeout(Duration::from_millis(500)) {
+                heard = data.len() == 1920;
+            }
+        }
+        assert!(heard, "no audio event");
         // A key from the screen's remote reaches the host.
         r.key(0x28, true, 0);
         let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));

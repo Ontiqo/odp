@@ -25,6 +25,7 @@ pub fn event_json(e: &Event) -> serde_json::Value {
         Event::Paired { host } => json!({"t": "paired", "host": host}),
         Event::Started { host, codec, w, h } => json!({"t": "started", "host": host, "codec": codec, "w": w, "h": h}),
         Event::Frame { show_at_us, captured_us, key, .. } => json!({"t": "frame", "show_at_us": show_at_us, "captured_us": captured_us, "key": key}),
+        Event::Audio { play_at_us, .. } => json!({"t": "audio", "play_at_us": play_at_us}),
         Event::Stopped { host } => json!({"t": "stopped", "host": host}),
         Event::Renamed { name } => json!({"t": "renamed", "name": name}),
         Event::CinemaOpen { service, url, position_ms, rate, playing, at_us } => {
@@ -56,7 +57,7 @@ pub unsafe extern "C" fn odp_receiver_start(dir: *const c_char, name: *const c_c
     let sink = move |e: Event| {
         let json = CString::new(event_json(&e).to_string()).unwrap_or_default();
         let (data, len) = match &e {
-            Event::Frame { data, .. } => (data.as_ptr(), data.len()),
+            Event::Frame { data, .. } | Event::Audio { data, .. } => (data.as_ptr(), data.len()),
             _ => (std::ptr::null(), 0),
         };
         let ctx = &ctx;
