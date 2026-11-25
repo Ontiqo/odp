@@ -60,7 +60,7 @@ const Mse = (() => {
 
   /** A player on `video`; `w`/`h` are the picture's size from session.start. */
   function create(video, onDelay) {
-    let shown = [];
+    let behind = 0; // seconds the video is behind its schedule (it can't keep up)
     let source = null, buffer = null, queue = [], spsKey = "", seq = 1, t0 = 0, last = 0, started = false;
     const pump = () => {
       if (!buffer || buffer.updating || !queue.length) return;
@@ -85,11 +85,7 @@ const Mse = (() => {
       if (Math.abs(off) > 0.5 || video.readyState < 2) video.currentTime = Math.max(start, Math.min(want, end - 0.02));
       else video.playbackRate = off > 0.02 ? 0.95 : off < -0.02 ? 1.05 : 1;
       if (video.paused) video.play().catch(() => {});
-      // The frame on screen now, and how long ago it was captured.
-      let i = 0;
-      while (i + 1 < shown.length && shown[i + 1][0] <= video.currentTime) i++;
-      if (shown.length && shown[i][0] <= video.currentTime && shown[i][1] > 0) onDelay(Date.now() * 1000 - shown[i][1]);
-      shown = shown.slice(i);
+      behind = Math.max(0, -off);
       // Keep the buffer short.
       if (buffer && !buffer.updating && video.currentTime > 10) {
         try { buffer.remove(0, video.currentTime - 5); } catch {}
@@ -120,13 +116,14 @@ const Mse = (() => {
         if (!t0) t0 = at - 1000000; // media time starts at 1 s
         const t = Math.max(Math.round(((at - t0) / 1e6) * 90000), last + 1);
         queue.push(fragment(seq++, t, 3000, key, data));
-        shown.push([t / 90000, capturedUs || 0]);
+        // Ready: the delay from capture to here, plus how far the video runs behind (the group's wait comes on top).
+        if (capturedUs > 0) onDelay(Date.now() * 1000 - capturedUs + Math.round(behind * 1e6));
         last = t;
         started = true;
         pump();
         return true;
       },
-      stop() { reset(); t0 = 0; last = 0; seq = 1; shown = []; },
+      stop() { reset(); t0 = 0; last = 0; seq = 1; behind = 0; },
     };
   }
   return { create, nals, init, fragment };

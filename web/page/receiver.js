@@ -145,11 +145,12 @@ function frame(au, showAtUs, key, capturedUs) {
           // Each frame's own times: its timestamp is when to show it, and `captured` keeps when it was captured.
           const showAt = vf.timestamp, cap = captured.get(showAt) || 0;
           captured.delete(showAt);
+          // Ready: the delay from capture to a decoded picture (the wait for its time comes on top, from the group).
+          if (cap > 0) delayed(Date.now() * 1000 - cap);
           const draw = () => {
             if (canvas.width !== vf.displayWidth) { canvas.width = vf.displayWidth; canvas.height = vf.displayHeight; }
             ctx.drawImage(vf, 0, 0);
             vf.close();
-            if (cap > 0) delayed(Date.now() * 1000 - cap);
           };
           // At its time on the shared clock (late frames at once).
           const wait = showAt / 1000 - Date.now();
