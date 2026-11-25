@@ -6,6 +6,21 @@
 use crate::{Out, Web};
 use std::cell::RefCell;
 
+// Randomness from the page: `env.odp_random(ptr, len)` fills memory with crypto.getRandomValues.
+#[cfg(target_arch = "wasm32")]
+mod random {
+    #[link(wasm_import_module = "env")]
+    extern "C" {
+        fn odp_random(ptr: *mut u8, len: usize);
+    }
+    fn fill(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+        // SAFETY: the page writes exactly `len` bytes at `ptr`.
+        unsafe { odp_random(buf.as_mut_ptr(), buf.len()) };
+        Ok(())
+    }
+    getrandom::register_custom_getrandom!(fill);
+}
+
 thread_local! {
     static WEB: RefCell<Option<Web>> = const { RefCell::new(None) };
     static OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };

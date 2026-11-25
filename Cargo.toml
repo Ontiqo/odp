@@ -18,9 +18,10 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# In a browser (the web profile's receivers: LG and Samsung TVs), randomness comes from crypto.getRandomValues.
+# In a browser (the web profile's receivers: LG and Samsung TVs), randomness comes from crypto.getRandomValues,
+# through a function the WebAssembly module imports (odp-web registers it; no generated JavaScript glue).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.2", features = ["custom"] }
 
 [workspace]
 members = [".", "receiver", "conformance", "web"]
