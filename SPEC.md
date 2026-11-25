@@ -94,6 +94,9 @@ is the set of receivers in one synced presentation.
 ### L5 Clock and sync
 - `clock.ping {t1}` / `clock.pong {t1, t2, t3}` on the UDP socket about once a second; the receiver keeps the
   lowest-delay samples and reports `offset_us`, `rtt_us` and its estimate of drift (ppm).
+  On the wire: `odpk`, then `P t1` or `Q t1 t2 t3` (i64 microseconds, big-endian) sealed on the media channel with
+  the additional data `odp clock`, in the sender's media counter sequence (so media packets and pongs never share a
+  counter).
 - `sync.target {delay_us}` from the host: the end-to-end delay the group plays at.
 - `sync.latency {video_us, audio_us, source: edid|measured|reported}` from the receiver: its own output latency.
 - Calibration: `cal.chirp {at_us, signal: "odp-chirp-1", gain}` asks a receiver to play a known 50 ms

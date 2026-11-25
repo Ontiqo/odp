@@ -121,3 +121,69 @@ mod tests {
         assert!((d - 20.0).abs() < 0.5, "{d}");
     }
 }
+
+/// Clock datagrams on the media socket: `odpk` then, sealed on the media channel with the additional data `odp clock`,
+/// a ping `P t1` (receiver to host) or a pong `Q t1 t2 t3` (host to receiver), each time an i64 in microseconds
+/// big-endian. Media packets start with their version byte (1), so the two never mix.
+pub const MAGIC: &[u8; 4] = b"odpk";
+pub const AAD: &[u8] = b"odp clock";
+
+/// A clock datagram's content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Probe {
+    Ping { t1: i64 },
+    Pong { t1: i64, t2: i64, t3: i64 },
+}
+
+impl Probe {
+    fn to_bytes(self) -> Vec<u8> {
+        match self {
+            Probe::Ping { t1 } => [&[b'P'][..], &t1.to_be_bytes()].concat(),
+            Probe::Pong { t1, t2, t3 } => [&[b'Q'][..], &t1.to_be_bytes(), &t2.to_be_bytes(), &t3.to_be_bytes()].concat(),
+        }
+    }
+
+    fn parse(b: &[u8]) -> Option<Probe> {
+        let at = |i: usize| b.get(1 + i * 8..9 + i * 8).map(|s| i64::from_be_bytes(s.try_into().unwrap()));
+        match *b.first()? {
+            b'P' if b.len() == 9 => Some(Probe::Ping { t1: at(0)? }),
+            b'Q' if b.len() == 25 => Some(Probe::Pong { t1: at(0)?, t2: at(1)?, t3: at(2)? }),
+            _ => None,
+        }
+    }
+
+    /// The datagram, sealed with this side's media sealer.
+    pub fn seal(self, sealer: &mut crate::session::Sealer) -> Vec<u8> {
+        [&MAGIC[..], &sealer.seal(AAD, &self.to_bytes())].concat()
+    }
+
+    /// A clock datagram opened with this side's media opener; None for anything else (a media packet, say).
+    pub fn open(datagram: &[u8], opener: &mut crate::session::Opener) -> Option<Probe> {
+        if datagram.len() < 4 || &datagram[..4] != MAGIC {
+            return None;
+        }
+        Probe::parse(&opener.open(AAD, &datagram[4..])?)
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+    use crate::keys::Identity;
+    use crate::session::{Channel, Handshake, Role};
+
+    #[test]
+    fn pings_and_pongs_open_on_the_other_side_only() {
+        let (hi, ri) = (Identity::generate(), Identity::generate());
+        let (h, r) = (Handshake::start(Role::Host, &hi), Handshake::start(Role::Receiver, &ri));
+        let (ho, ro) = (h.offer(), r.offer());
+        let (hs, rs) = (h.sign(&hi, &ro), r.sign(&ri, &ho));
+        let (mut host, mut receiver) = (h.finish(&ro, &rs, None).unwrap(), r.finish(&ho, &hs, None).unwrap());
+        let ping = Probe::Ping { t1: 1_000 }.seal(receiver.sealer(Channel::Media));
+        assert_eq!(Probe::open(&ping, host.opener(Channel::Media)), Some(Probe::Ping { t1: 1_000 }));
+        let pong = Probe::Pong { t1: 1_000, t2: 5_000, t3: 5_010 }.seal(host.sealer(Channel::Media));
+        assert_eq!(Probe::open(&pong, receiver.opener(Channel::Media)), Some(Probe::Pong { t1: 1_000, t2: 5_000, t3: 5_010 }));
+        assert_eq!(Probe::open(&pong, receiver.opener(Channel::Media)), None, "replayed");
+        assert_eq!(Probe::open(&[1, 1, 0, 0], receiver.opener(Channel::Media)), None, "a media packet");
+    }
+}
