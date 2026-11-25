@@ -140,13 +140,16 @@ is the set of receivers in one synced presentation.
 
 ## What runs today (2026-11)
 - Hosts: Windows (desktop capture, H.264 on the graphics card or in software, one encoder for several receivers, each
-  with its own session).
-- Receivers: Windows (window or full screen), macOS (the display layer, hardware decoding), Linux desktops and
-  kiosks (GStreamer: Wayland, X11 or straight to the display with KMS). All are **Basic** with clock pings and
-  `session.keyframe` on loss, **Interactive** (pointer datagrams, `input.key`), and present in step with
-  `sync.target`. Kiosks also take `device.rename`.
-- Not yet: latency reports and calibration (Synced), Cinema, extended desktops (virtual displays), audio inside ODP
-  (Omninput sends a cast's sound through its own sound sharing for now).
+  with its own session); Cinema's `cinema.*` from a browser extension that notices protected video.
+- Receivers, all checked with `odp-check`:
+  - Omninput on Windows, macOS and Linux desktops and kiosks: Basic, Synced, Interactive and Cinema (the title in
+    Edge or Chrome, steered over the DevTools protocol). Kiosks also take `device.rename`.
+  - The reference receiver (`receiver/`), and the TV apps built on it: Android TV / Google TV (checked on a
+    Chromecast with Google TV and a phone: Basic, Synced, Interactive, Cinema through the service app's media
+    session) and Apple TV (checked in the simulator: Basic, Synced, Cinema).
+  - Discovery: the TV apps advertise `_odp-receiver._tcp`; Omninput hosts browse for it.
+- Not yet: calibration (`cal.*`), extended desktops (virtual displays), audio inside ODP (Omninput sends a cast's
+  sound through its own sound sharing for now), NACK and FEC, the web profile.
 
 ## Open questions before 1.0
 - Whether a cast's sound moves into L4 audio streams in 1.0 (with the latency reports that keep it in step), or stays
