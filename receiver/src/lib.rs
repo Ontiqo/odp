@@ -328,6 +328,8 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     let (tx, rx) = channel::<Message>();
     *inner.out.lock().unwrap() = Some(tx.clone());
     let mut stop_media: Option<Arc<AtomicBool>> = None;
+    // Whether this link showed a session (a meeting room forgets such a guest when it goes).
+    let mut showed = false;
     let local = |offset: &Arc<Mutex<Option<i64>>>, host_us: i64| host_us - offset.lock().unwrap().unwrap_or(0);
     loop {
         while let Ok(m) = rx.try_recv() {
@@ -364,6 +366,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 let input_keys = link.session.channel_keys(Channel::Input);
                 start_media(inner, socket, media_keys, input_keys, tx.clone(), stop.clone());
                 stop_media = Some(stop);
+                showed = true;
                 let _ = link.send(&Message::SessionOk { id, udp_port });
                 (inner.sink)(Event::Started { host: link.peer_name.clone(), codec, w, h });
             }
@@ -408,8 +411,9 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     }
     *inner.media.lock().unwrap() = None;
     *inner.out.lock().unwrap() = None;
-    // A meeting room: the guest is forgotten on leaving.
-    if inner.room.load(Ordering::SeqCst) {
+    // A meeting room: the guest is forgotten once it has shown its screen and left (not after the short link that
+    // only paired it, which ends before it casts).
+    if inner.room.load(Ordering::SeqCst) && showed {
         let mut hosts = inner.hosts.lock().unwrap();
         hosts.retain(|h| h.id != link.peer_id);
         save_hosts(&inner.cfg.dir, &hosts);
