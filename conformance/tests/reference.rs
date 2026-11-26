@@ -15,12 +15,12 @@ fn the_reference_receiver_meets_basic_synced_and_cinema() {
     let frames = Arc::new(Mutex::new(0u32));
     let r = Receiver::start(Config { dir: dir.clone(), name: "Reference".into(), port: 0, caps, kiosk: false, bind: [127, 0, 0, 1].into() }, move |e| match e {
         Event::Pin(x) => *p.lock().unwrap() = x,
-        Event::Frame { .. } => {
+        Event::Frame { slot, .. } => {
             let mut n = frames.lock().unwrap();
             *n += 1;
             if *n == 20 {
                 if let Some(r) = m.lock().unwrap().as_ref() {
-                    r.latency(40_000);
+                    r.latency(slot, 40_000);
                 }
             }
         }

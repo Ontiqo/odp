@@ -88,16 +88,24 @@ pub extern "system" fn Java_app_omninput_screen_Odp_pointer(_: JNIEnv, _: JClass
 }
 
 #[no_mangle]
-pub extern "system" fn Java_app_omninput_screen_Odp_decoderFailed(_: JNIEnv, _: JClass, handle: jlong) {
+pub extern "system" fn Java_app_omninput_screen_Odp_decoderFailed(_: JNIEnv, _: JClass, handle: jlong, slot: jint) {
     if let Some(r) = receiver(handle) {
-        r.decoder_failed();
+        r.decoder_failed(slot as u32);
+    }
+}
+
+/// Which slot keys and the pointer go to (`Receiver::focus`).
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_focus(_: JNIEnv, _: JClass, handle: jlong, slot: jint) {
+    if let Some(r) = receiver(handle) {
+        r.focus(slot as u32);
     }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_app_omninput_screen_Odp_latency(_: JNIEnv, _: JClass, handle: jlong, video_us: jlong) {
+pub extern "system" fn Java_app_omninput_screen_Odp_latency(_: JNIEnv, _: JClass, handle: jlong, slot: jint, video_us: jlong) {
     if let Some(r) = receiver(handle) {
-        r.latency(video_us);
+        r.latency(slot as u32, video_us);
     }
 }
 

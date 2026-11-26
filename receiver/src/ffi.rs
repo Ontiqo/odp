@@ -2,7 +2,8 @@
 //!
 //! Every event comes to one callback as a JSON object (`t` names it: `listening`, `pin`, `paired`, `started`, `frame`,
 //! `stopped`, `renamed`, `cinema.open`, `cinema.control`, `cinema.close`, `problem`); a frame's encoded bytes come in
-//! `data`/`len` (null and 0 otherwise). The strings and bytes are only valid during the call.
+//! `data`/`len` (null and 0 otherwise). The strings and bytes are only valid during the call. `started`, `frame`,
+//! `audio` and `stopped` carry their `slot`: each host showing here has its own (a split screen, one tile each).
 
 use crate::{Config, Event, Receiver};
 use odp::control::Caps;
@@ -24,10 +25,10 @@ pub fn event_json(e: &Event) -> serde_json::Value {
         Event::Pin(pin) => json!({"t": "pin", "pin": pin}),
         Event::Paired { host } => json!({"t": "paired", "host": host}),
         // region: {x, y, w, h}, each 0..65535 of the picture (a wall's screen), or absent.
-        Event::Started { host, codec, w, h, region } => json!({"t": "started", "host": host, "codec": codec, "w": w, "h": h, "region": region}),
-        Event::Frame { show_at_us, captured_us, key, .. } => json!({"t": "frame", "show_at_us": show_at_us, "captured_us": captured_us, "key": key}),
-        Event::Audio { play_at_us, .. } => json!({"t": "audio", "play_at_us": play_at_us}),
-        Event::Stopped { host } => json!({"t": "stopped", "host": host}),
+        Event::Started { slot, host, codec, w, h, region } => json!({"t": "started", "slot": slot, "host": host, "codec": codec, "w": w, "h": h, "region": region}),
+        Event::Frame { slot, show_at_us, captured_us, key, .. } => json!({"t": "frame", "slot": slot, "show_at_us": show_at_us, "captured_us": captured_us, "key": key}),
+        Event::Audio { slot, play_at_us, .. } => json!({"t": "audio", "slot": slot, "play_at_us": play_at_us}),
+        Event::Stopped { slot, host } => json!({"t": "stopped", "slot": slot, "host": host}),
         Event::Renamed { name } => json!({"t": "renamed", "name": name}),
         Event::CinemaOpen { service, url, position_ms, rate, playing, at_us } => {
             json!({"t": "cinema.open", "service": service, "url": url, "position_ms": position_ms, "rate": rate, "playing": playing, "at_us": at_us})
@@ -129,18 +130,29 @@ pub unsafe extern "C" fn odp_receiver_pointer(r: *const Receiver, x: u16, y: u16
 /// # Safety
 /// `r` comes from `odp_receiver_start`.
 #[no_mangle]
-pub unsafe extern "C" fn odp_receiver_decoder_failed(r: *const Receiver) {
+pub unsafe extern "C" fn odp_receiver_decoder_failed(r: *const Receiver, slot: u32) {
     if let Some(r) = r.as_ref() {
-        r.decoder_failed();
+        r.decoder_failed(slot);
+    }
+}
+
+/// Which slot keys and the pointer go to (`Receiver::focus`).
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_focus(r: *const Receiver, slot: u32) {
+    if let Some(r) = r.as_ref() {
+        r.focus(slot);
     }
 }
 
 /// # Safety
 /// `r` comes from `odp_receiver_start`.
 #[no_mangle]
-pub unsafe extern "C" fn odp_receiver_latency(r: *const Receiver, video_us: i64) {
+pub unsafe extern "C" fn odp_receiver_latency(r: *const Receiver, slot: u32, video_us: i64) {
     if let Some(r) = r.as_ref() {
-        r.latency(video_us);
+        r.latency(slot, video_us);
     }
 }
 

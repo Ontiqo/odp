@@ -1,7 +1,8 @@
 //! The reference ODP receiver: everything a screen needs except its decoder and its window. It listens for hosts,
-//! pairs with the PIN it shows, runs one session at a time, keeps the shared clock, puts media back into frames and
-//! hands each one over with the moment to show it, asks for a key frame when one is lost, and sends keys and the
-//! pointer back. Cinema messages are handed over on this screen's clock.
+//! pairs with the PIN it shows, runs a session for each host showing here (several at once: a split screen, each in
+//! its own slot), keeps the shared clock, puts media back into frames and hands each one over with the moment to show
+//! it, asks for a key frame when one is lost, and sends keys and the pointer back (to the focused slot). Cinema
+//! messages are handed over on this screen's clock.
 //!
 //! A screen app (Android TV, Apple TV, a kiosk) starts a [`Receiver`] with a callback for [`Event`]s, decodes the
 //! frames it gets, and calls back with keys, pointer moves, its own latency and Cinema's status. `ffi` offers the
@@ -16,7 +17,7 @@ use odp::keys::Identity;
 use odp::session::{Channel, ChannelKeys, Sealer};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -48,17 +49,19 @@ pub enum Event {
     /// The PIN to show while pairing is open; None hides it.
     Pin(Option<String>),
     Paired { host: String },
-    /// A host started showing its screen here: frames follow.
+    /// A host started showing its screen here: frames follow, in `slot` (each host showing here has its own; with
+    /// several at once the screen is split, one tile each, in the order they started). It is focused (`focus`).
     /// `region`: a screen of a wall shows only this part of the picture, enlarged to fill it.
-    Started { host: String, codec: String, w: u32, h: u32, region: Option<odp::control::Region> },
+    Started { slot: u32, host: String, codec: String, w: u32, h: u32, region: Option<odp::control::Region> },
     /// One encoded frame (H.264 Annex-B for "h264"), to show at `show_at_us` on this computer's clock (microseconds
     /// since 1970; 0 while the clock is still being measured: show it now). `captured_us` is when the host captured
     /// it, on this clock (0 until measured): a screen reports its delay from there to its picture with `latency`.
-    Frame { data: Vec<u8>, show_at_us: i64, captured_us: i64, key: bool },
+    Frame { slot: u32, data: Vec<u8>, show_at_us: i64, captured_us: i64, key: bool },
     /// 10 ms of sound, 16-bit PCM, 48 kHz stereo (odp L4 PCM on a LAN), to play at `play_at_us` on this computer's
     /// clock (0 while the clock is being measured: play it now). Only to screens whose caps say they play sound.
-    Audio { data: Vec<u8>, play_at_us: i64 },
-    Stopped { host: String },
+    /// With several slots, a screen plays the focused one's sound.
+    Audio { slot: u32, data: Vec<u8>, play_at_us: i64 },
+    Stopped { slot: u32, host: String },
     /// A paired host named this screen.
     Renamed { name: String },
     /// Cinema (L7): play `url` from its service; times are on this computer's clock.
@@ -83,6 +86,22 @@ struct Host {
     key: [u8; 32],
 }
 
+/// One host's link: its messages, its session's media side and its clock.
+struct Slot {
+    id: u32,
+    /// Messages for the host.
+    out: Sender<Message>,
+    media: Mutex<Option<Media>>,
+    /// The host's clock less this one's, once measured.
+    offset: Arc<Mutex<Option<i64>>>,
+    /// The group's delay from capture to picture (sync.target).
+    target: Arc<AtomicI64>,
+    /// How much later than the group's time this screen plays its sound (sync.offset: the host tuned the room).
+    sound_offset: Arc<AtomicI64>,
+    /// The decoder failed: wait for a key frame.
+    spoiled: Arc<AtomicBool>,
+}
+
 /// The session's media side, for input and the clock.
 struct Media {
     socket: UdpSocket,
@@ -98,17 +117,11 @@ struct Inner {
     hosts: Mutex<Vec<Host>>,
     pin: Mutex<Option<(String, Instant)>>,
     sink: Sink,
-    /// Messages for the host of the running session.
-    out: Mutex<Option<Sender<Message>>>,
-    media: Mutex<Option<Media>>,
-    /// The host's clock less this one's, once measured.
-    offset: Arc<Mutex<Option<i64>>>,
-    /// The group's delay from capture to picture (sync.target).
-    target: Arc<AtomicI64>,
-    /// How much later than the group's time this screen plays its sound (sync.offset: the host tuned the room).
-    sound_offset: Arc<AtomicI64>,
-    /// The decoder failed: wait for a key frame.
-    spoiled: Arc<AtomicBool>,
+    /// The hosts linked here, each in its slot.
+    slots: Mutex<Vec<Arc<Slot>>>,
+    next_slot: AtomicU32,
+    /// The slot keys, the pointer and Cinema's status go to (the last one started, unless the app says otherwise).
+    focus: AtomicU32,
     /// A meeting room's screen (`set_room`): a PIN always open, each host forgotten when it leaves.
     room: AtomicBool,
 }
@@ -154,12 +167,9 @@ impl Receiver {
             hosts: Mutex::new(hosts),
             pin: Mutex::new(None),
             sink: Arc::new(sink),
-            out: Mutex::new(None),
-            media: Mutex::new(None),
-            offset: Arc::new(Mutex::new(None)),
-            target: Arc::new(AtomicI64::new(0)),
-            sound_offset: Arc::new(AtomicI64::new(0)),
-            spoiled: Arc::new(AtomicBool::new(false)),
+            slots: Mutex::new(Vec::new()),
+            next_slot: AtomicU32::new(1),
+            focus: AtomicU32::new(0),
             room: AtomicBool::new(false),
         });
         (inner.sink)(Event::Listening { port, fingerprint: inner.identity.fingerprint() });
@@ -228,46 +238,68 @@ impl Receiver {
         save_hosts(&self.inner.cfg.dir, &hosts);
     }
 
-    /// A key on this screen's keyboard or remote (USB HID usage, page 7).
+    /// Which slot the keyboard, remote and pointer control (a split screen: the tile the viewer chose).
+    pub fn focus(&self, slot: u32) {
+        self.inner.focus.store(slot, Ordering::SeqCst);
+    }
+
+    /// The focused slot (0: none showing).
+    pub fn focused(&self) -> u32 {
+        self.inner.focus.load(Ordering::SeqCst)
+    }
+
+    /// A key on this screen's keyboard or remote (USB HID usage, page 7), to the focused slot's host.
     pub fn key(&self, usage: u16, down: bool, modifiers: u8) {
         self.send(Message::Key { usage, down, modifiers });
     }
 
-    /// The pointer, 0..65535 across this screen.
+    /// The pointer, 0..65535 across the focused slot's picture.
     pub fn pointer(&self, x: u16, y: u16, buttons: u8, wheel: i16) {
-        if let Some(m) = self.inner.media.lock().unwrap().as_mut() {
+        let Some(slot) = self.slot(self.focused()) else { return };
+        if let Some(m) = slot.media.lock().unwrap().as_mut() {
             if let Some(to) = *m.host.lock().unwrap() {
                 let _ = m.socket.send_to(&odp::input::seal(&odp::input::Event::Pointer { x, y, buttons, wheel }, &mut m.input), to);
             }
+        };
+    }
+
+    /// The decoder of `slot` couldn't use a frame: its next frame is a key frame.
+    pub fn decoder_failed(&self, slot: u32) {
+        if let Some(s) = self.slot(slot) {
+            s.spoiled.store(true, Ordering::SeqCst);
         }
     }
 
-    /// The decoder couldn't use a frame: the next shown frame is a key frame.
-    pub fn decoder_failed(&self) {
-        self.inner.spoiled.store(true, Ordering::SeqCst);
-    }
-
-    /// This screen's delay from a frame's capture time to its picture, in microseconds (sync.latency).
     /// This screen's sound output changed (`device`: its name; `kind`: hdmi, speaker, bluetooth, airplay, usb,
-    /// headphones; `reported_us`: the latency the system states for it): the host times it again.
+    /// headphones; `reported_us`: the latency the system states for it): every host showing here times it again.
     pub fn output(&self, device: &str, kind: &str, reported_us: i64) {
-        self.send(Message::SyncOutput { device: device.into(), kind: kind.into(), reported_us });
+        for s in self.inner.slots.lock().unwrap().iter() {
+            let _ = s.out.send(Message::SyncOutput { device: device.into(), kind: kind.into(), reported_us });
+        }
     }
 
-    pub fn latency(&self, video_us: i64) {
-        self.send(Message::SyncLatency { video_us, audio_us: 0, source: "measured".into() });
+    /// The delay from a frame's capture time to its picture in `slot`, in microseconds (sync.latency).
+    pub fn latency(&self, slot: u32, video_us: i64) {
+        if let Some(s) = self.slot(slot) {
+            let _ = s.out.send(Message::SyncLatency { video_us, audio_us: 0, source: "measured".into() });
+        }
     }
 
     /// Cinema on this screen: where the title is and whether it plays, or why it can't.
     pub fn cinema_status(&self, position_ms: i64, playing: bool, error: Option<String>) {
-        let at_us = now_us() + self.inner.offset.lock().unwrap().unwrap_or(0);
+        let Some(slot) = self.slot(self.focused()) else { return };
+        let at_us = now_us() + slot.offset.lock().unwrap().unwrap_or(0);
         let state = if playing { PlayState::Playing } else { PlayState::Paused };
-        self.send(Message::CinemaStatus { position_ms, at_us, state, error });
+        let _ = slot.out.send(Message::CinemaStatus { position_ms, at_us, state, error });
+    }
+
+    fn slot(&self, id: u32) -> Option<Arc<Slot>> {
+        self.inner.slots.lock().unwrap().iter().find(|s| s.id == id).cloned()
     }
 
     fn send(&self, m: Message) {
-        if let Some(tx) = self.inner.out.lock().unwrap().as_ref() {
-            let _ = tx.send(m);
+        if let Some(s) = self.slot(self.focused()) {
+            let _ = s.out.send(m);
         }
     }
 }
@@ -333,7 +365,18 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         }
     }
     let (tx, rx) = channel::<Message>();
-    *inner.out.lock().unwrap() = Some(tx.clone());
+    let slot = Arc::new(Slot {
+        id: inner.next_slot.fetch_add(1, Ordering::SeqCst),
+        out: tx.clone(),
+        media: Mutex::new(None),
+        offset: Arc::new(Mutex::new(None)),
+        target: Arc::new(AtomicI64::new(0)),
+        sound_offset: Arc::new(AtomicI64::new(0)),
+        spoiled: Arc::new(AtomicBool::new(false)),
+    });
+    inner.slots.lock().unwrap().push(slot.clone());
+    // Keys go to a linked host before it shows anything too (none other is focused).
+    let _ = inner.focus.compare_exchange(0, slot.id, Ordering::SeqCst, Ordering::SeqCst);
     let mut stop_media: Option<Arc<AtomicBool>> = None;
     // Whether this link showed a session (a meeting room forgets such a guest when it goes).
     let mut showed = false;
@@ -371,20 +414,21 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 let stop = Arc::new(AtomicBool::new(false));
                 let media_keys = link.session.channel_keys(Channel::Media);
                 let input_keys = link.session.channel_keys(Channel::Input);
-                start_media(inner, socket, media_keys, input_keys, tx.clone(), stop.clone());
+                start_media(inner, &slot, socket, media_keys, input_keys, stop.clone());
                 stop_media = Some(stop);
                 showed = true;
+                inner.focus.store(slot.id, Ordering::SeqCst);
                 let _ = link.send(&Message::SessionOk { id, udp_port });
-                (inner.sink)(Event::Started { host: link.peer_name.clone(), codec, w, h, region });
+                (inner.sink)(Event::Started { slot: slot.id, host: link.peer_name.clone(), codec, w, h, region });
             }
             Ok(Some(Message::SessionStop)) => {
                 if let Some(s) = stop_media.take() {
                     s.store(true, Ordering::SeqCst);
-                    (inner.sink)(Event::Stopped { host: link.peer_name.clone() });
+                    (inner.sink)(Event::Stopped { slot: slot.id, host: link.peer_name.clone() });
                 }
             }
-            Ok(Some(Message::SyncTarget { delay_us })) => inner.target.store(delay_us, Ordering::SeqCst),
-            Ok(Some(Message::SyncOffset { us })) => inner.sound_offset.store(us.clamp(-500_000, 500_000), Ordering::SeqCst),
+            Ok(Some(Message::SyncTarget { delay_us })) => slot.target.store(delay_us, Ordering::SeqCst),
+            Ok(Some(Message::SyncOffset { us })) => slot.sound_offset.store(us.clamp(-500_000, 500_000), Ordering::SeqCst),
             Ok(Some(Message::Rename { name })) => {
                 if inner.cfg.kiosk {
                     let name: String = name.trim().chars().take(64).collect();
@@ -397,11 +441,11 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 }
             }
             Ok(Some(Message::CinemaOpen { service, url, position_ms, rate, state, at_us })) => {
-                let at_us = local(&inner.offset, at_us);
+                let at_us = local(&slot.offset, at_us);
                 (inner.sink)(Event::CinemaOpen { service, url, position_ms, rate, playing: state == PlayState::Playing, at_us });
             }
             Ok(Some(Message::CinemaControl { state, position_ms, rate, at_us })) => {
-                let at_us = local(&inner.offset, at_us);
+                let at_us = local(&slot.offset, at_us);
                 (inner.sink)(Event::CinemaControl { position_ms, rate, playing: state == PlayState::Playing, at_us });
             }
             Ok(Some(Message::CinemaClose)) => (inner.sink)(Event::CinemaClose),
@@ -414,10 +458,16 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     }
     if let Some(s) = stop_media.take() {
         s.store(true, Ordering::SeqCst);
-        (inner.sink)(Event::Stopped { host: link.peer_name.clone() });
+        (inner.sink)(Event::Stopped { slot: slot.id, host: link.peer_name.clone() });
     }
-    *inner.media.lock().unwrap() = None;
-    *inner.out.lock().unwrap() = None;
+    {
+        let mut slots = inner.slots.lock().unwrap();
+        slots.retain(|s| s.id != slot.id);
+        // The focus moves to the last one still here.
+        if inner.focus.load(Ordering::SeqCst) == slot.id {
+            inner.focus.store(slots.last().map_or(0, |s| s.id), Ordering::SeqCst);
+        }
+    }
     // A meeting room: the guest is forgotten once it has shown its screen and left (not after the short link that
     // only paired it, which ends before it casts).
     if inner.room.load(Ordering::SeqCst) && showed {
@@ -457,13 +507,13 @@ impl KeyGate {
 }
 
 /// The session's UDP side: clock pings, frames, and the socket and sealer input goes out with.
-fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input: ChannelKeys, out: Sender<Message>, stop: Arc<AtomicBool>) {
+fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: ChannelKeys, input: ChannelKeys, stop: Arc<AtomicBool>) {
     let host: Arc<Mutex<Option<SocketAddr>>> = Arc::new(Mutex::new(None));
     if let Ok(clone) = socket.try_clone() {
-        *inner.media.lock().unwrap() = Some(Media { socket: clone, input: input.open(Channel::Input).0, host: host.clone() });
+        *slot.media.lock().unwrap() = Some(Media { socket: clone, input: input.open(Channel::Input).0, host: host.clone() });
     }
-    let (sink, offset, target, spoiled) = (inner.sink.clone(), inner.offset.clone(), inner.target.clone(), inner.spoiled.clone());
-    let sound_offset = inner.sound_offset.clone();
+    let (sink, offset, target, spoiled) = (inner.sink.clone(), slot.offset.clone(), slot.target.clone(), slot.spoiled.clone());
+    let (sound_offset, out, id) = (slot.sound_offset.clone(), slot.out.clone(), slot.id);
     *offset.lock().unwrap() = None;
     std::thread::spawn(move || {
         let (mut pinger, mut opener) = media.open(Channel::Media);
@@ -501,7 +551,7 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
             if frame.kind == odp::media::Kind::Audio {
                 let captured = clock.to_local(frame.pts_us).unwrap_or(0);
                 let play_at_us = if captured > 0 { captured + target.load(Ordering::SeqCst) + sound_offset.load(Ordering::SeqCst) } else { 0 };
-                sink(Event::Audio { data: frame.data, play_at_us });
+                sink(Event::Audio { slot: id, data: frame.data, play_at_us });
                 continue;
             }
             if spoiled.swap(false, Ordering::SeqCst) {
@@ -514,7 +564,7 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
             }
             let captured_us = clock.to_local(frame.pts_us).unwrap_or(0);
             let show_at_us = if captured_us > 0 { captured_us + target.load(Ordering::SeqCst) } else { 0 };
-            sink(Event::Frame { data: frame.data, show_at_us, captured_us, key: frame.key });
+            sink(Event::Frame { slot: id, data: frame.data, show_at_us, captured_us, key: frame.key });
         }
     });
 }
@@ -564,6 +614,83 @@ mod tests {
         let file = dir.join("identity.key");
         let e = Receiver::start(Config { dir: file, name: "TV".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, |_| {}).err().unwrap();
         assert!(e.contains("can't keep this screen's files"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two hosts show here at once (a split screen): their frames arrive in two slots, and keys go to the focused one.
+    #[test]
+    fn two_hosts_show_at_once_in_their_own_slots() {
+        let dir = std::env::temp_dir().join(format!("odp-receiver-slots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel::<Event>();
+        let tx = Mutex::new(tx);
+        let caps = Caps { keyboard: true, ..Default::default() };
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let r = Receiver::start(Config { dir: dir.clone(), name: "Room TV".into(), port: 0, caps, kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        let mut links = Vec::new();
+        let mut started = Vec::new();
+        for (n, name) in ["Laptop A", "Laptop B"].iter().enumerate() {
+            r.pairing(true);
+            let pin = loop {
+                if let Event::Pin(Some(p)) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                    break p;
+                }
+            };
+            let id = Identity::generate();
+            let host = format!("host{n}");
+            let me = odp::link::Me { identity: &id, id: &host, name, caps: Caps::default() };
+            let mut link = odp::link::host(TcpStream::connect(("127.0.0.1", r.port())).unwrap(), me, None, Some(&pin)).unwrap();
+            link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 640, h: 360, fps: 30, bitrate_kbps: 2000, audio: false, group: None, region: None }).unwrap();
+            let udp_port = match link.recv().unwrap().unwrap() {
+                Message::SessionOk { udp_port, .. } => udp_port,
+                m => panic!("{m:?}"),
+            };
+            let slot = loop {
+                if let Event::Started { slot, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                    break slot;
+                }
+            };
+            // A key frame marked with whose it is.
+            let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let (mut sealer, _) = link.session.channel_keys(Channel::Media).open(Channel::Media);
+            let mut p = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
+            for d in p.frame(&[0, 0, 0, 1, n as u8], now_us(), true, &mut sealer) {
+                udp.send_to(&d, ("127.0.0.1", udp_port)).unwrap();
+            }
+            let from = loop {
+                if let Event::Frame { slot, data, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                    break (slot, data[4]);
+                }
+            };
+            assert_eq!(from, (slot, n as u8));
+            started.push(slot);
+            links.push(link);
+        }
+        assert_ne!(started[0], started[1]);
+        // The last one started has the keys; focusing the first sends them there.
+        assert_eq!(r.focused(), started[1]);
+        r.focus(started[0]);
+        r.key(0x28, true, 0);
+        let _ = links[0].stream().set_read_timeout(Some(Duration::from_secs(5)));
+        loop {
+            if let Message::Key { usage, .. } = links[0].recv().unwrap().unwrap() {
+                assert_eq!(usage, 0x28);
+                break;
+            }
+        }
+        // The first leaves: its slot stops, and the keys move to the one still showing.
+        drop(links.remove(0));
+        let gone = loop {
+            if let Event::Stopped { slot, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break slot;
+            }
+        };
+        assert_eq!(gone, started[0]);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(r.focused(), started[1]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
