@@ -124,6 +124,16 @@ struct Inner {
     focus: AtomicU32,
     /// A meeting room's screen (`set_room`): a PIN always open, each host forgotten when it leaves.
     room: AtomicBool,
+    /// Game controllers' last states and how often each goes again (`pad`).
+    pads: Mutex<Pads>,
+}
+
+/// Each controller's last state and the sends it has left (u8::MAX: until it is at rest), and whether the resending
+/// thread runs.
+#[derive(Default)]
+struct Pads {
+    states: [Option<(odp::input::Pad, u8)>; 4],
+    resending: bool,
 }
 
 /// A running receiver. Dropping it does not stop the listener (the screen app lives as long as the process).
@@ -177,6 +187,7 @@ impl Receiver {
             next_slot: AtomicU32::new(1),
             focus: AtomicU32::new(0),
             room: AtomicBool::new(false),
+            pads: Mutex::new(Pads::default()),
         });
         (inner.sink)(Event::Listening { port, fingerprint: inner.identity.fingerprint() });
         let me = inner.clone();
@@ -296,6 +307,56 @@ impl Receiver {
     /// A pen on the focused slot's picture: where, how hard (0..65535), its `odp::input::pen` flags.
     pub fn pen(&self, x: u16, y: u16, pressure: u16, flags: u8) {
         self.input(&odp::input::Event::Pen { x, y, pressure, flags });
+    }
+
+    /// A game controller's whole state (ODP 1.1, input kind 4), to the focused slot's host: sent when it changes;
+    /// while it isn't at rest it goes again every 100 ms, and at rest three times, so a lost datagram is repaired.
+    /// Call it with each new state (polling or events, either).
+    pub fn pad(&self, pad: odp::input::Pad) {
+        let index = (pad.index as usize).min(3);
+        let start = {
+            let mut pads = self.inner.pads.lock().unwrap();
+            let changed = pads.states[index].map(|(p, _)| p) != Some(pad);
+            if changed {
+                pads.states[index] = Some((pad, if pad.at_rest() { 3 } else { u8::MAX }));
+            }
+            if !changed {
+                return;
+            }
+            let start = !pads.resending;
+            pads.resending = true;
+            start
+        };
+        self.input(&odp::input::Event::Pad(pad));
+        if start {
+            let me = self.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let due: Vec<odp::input::Pad> = {
+                    let mut pads = me.inner.pads.lock().unwrap();
+                    let mut due = Vec::new();
+                    for s in pads.states.iter_mut() {
+                        if let Some((p, left)) = s {
+                            if *left > 0 {
+                                due.push(*p);
+                                if *left != u8::MAX {
+                                    *left -= 1;
+                                }
+                            }
+                        }
+                    }
+                    // Nothing more to send: this ends until the next change.
+                    if due.is_empty() {
+                        pads.resending = false;
+                        return;
+                    }
+                    due
+                };
+                for p in due {
+                    me.input(&odp::input::Event::Pad(p));
+                }
+            });
+        }
     }
 
     fn input(&self, e: &odp::input::Event) {
@@ -923,6 +984,26 @@ mod tests {
                 _ => continue,
             }
         }
+        // A game controller (ODP 1.1): its state reaches the host, again every 100 ms while held; at rest it goes
+        // four times (once, then three more) and stops.
+        let (_, mut opener) = link.session.channel_keys(Channel::Input).open(Channel::Input);
+        let _ = udp.set_read_timeout(Some(Duration::from_millis(400)));
+        let held = odp::input::Pad { index: 0, buttons: odp::input::pad::A, lx: 20000, ..Default::default() };
+        r.pad(held);
+        r.pad(held); // the same again: nothing new is sent for it
+        std::thread::sleep(Duration::from_millis(350));
+        r.pad(odp::input::Pad::default());
+        let mut got = Vec::new();
+        let mut buf = [0u8; 256];
+        while let Ok((n, _)) = udp.recv_from(&mut buf) {
+            if let Some(odp::input::Event::Pad(p)) = odp::input::open(&buf[..n], &mut opener) {
+                got.push(p.at_rest());
+            }
+        }
+        let held_sends = got.iter().filter(|r| !**r).count();
+        assert!((3..=5).contains(&held_sends), "held state sent {held_sends} times: {got:?}");
+        assert_eq!(got.iter().filter(|r| **r).count(), 4, "{got:?}");
+        assert!(got.last() == Some(&true));
         // Paired: it's remembered.
         assert_eq!(r.hosts(), vec![("host1".to_string(), "Laptop".to_string())]);
         assert!(dir.join("hosts.json").exists());

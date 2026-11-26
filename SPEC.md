@@ -138,6 +138,12 @@ is the set of receivers in one synced presentation.
   by the receiver resending the full contact set every 100 ms while any contact is down.
 - Pen: `{x, y, pressure, flags: in_range|tip|barrel|eraser}` (datagram kind 3: `x(2) y(2) pressure(2) flags(1)`, pressure
   0..65535), on UDP, resent every 100 ms while the tip is down. A receiver says it can send one with `caps.pen: true`.
+- Game controllers (1.1): datagram kind 4, `pad(1) buttons(2) lt(1) rt(1) lx(2) ly(2) rx(2) ry(2)` (big-endian): which
+  controller (0..3), the buttons (bits: A 1, B 2, X 4, Y 8, left shoulder 16, right shoulder 32, view 64, menu 128,
+  left stick 256, right stick 512, up 1024, down 2048, left 4096, right 8192, guide 16384; A is the bottom face
+  button), triggers 0..255, sticks -32768..32767 with up positive. The whole state goes on each change and every
+  100 ms while it isn't at rest; at rest three times. A receiver says how many it sends with `caps.controllers`. The
+  host shows them to its programs as game controllers of its own (Omninput: a virtual controller per pad).
 - The host maps these onto its own input pipeline (Omninput: the existing injectors; touch becomes pointer input where
   the OS has no touch injection).
 
@@ -190,7 +196,10 @@ is the set of receivers in one synced presentation.
   browser receiver. NACK: the reference receiver asks for lost packets (`media.nack`, gaps of up to 64 in the
   sequence) and `odp-check` checks it.
 
-## Settled for 1.0, and 1.1
+## 1.1 (2026-11-27)
+- Game controllers (L6, kind 4, `caps.controllers`). `hello` lists `odp/1.1` first; a 1.0 side ignores kind 4.
+
+## Settled for 1.0, and later
 - Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.
-- Multichannel audio and HDR metadata (2026-11-27): 1.1. They are optional additions (a channel layout in
+- Multichannel audio and HDR metadata (2026-11-27): a later 1.x. They are optional additions (a channel layout in
   `caps.audio`, colour metadata in `session.start`), which is what a minor version is for; 1.0 is stereo and SDR.

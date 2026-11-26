@@ -124,6 +124,17 @@ pub extern "system" fn Java_app_omninput_screen_Odp_pen(_: JNIEnv, _: JClass, ha
     }
 }
 
+/// A game controller's whole state (ODP 1.1): which (0..3), buttons (odp::input::pad bits), triggers 0..255, sticks
+/// -32768..32767 with up positive.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "system" fn Java_app_omninput_screen_Odp_pad(_: JNIEnv, _: JClass, handle: jlong, index: jint, buttons: jint, lt: jint, rt: jint, lx: jint, ly: jint, rx: jint, ry: jint) {
+    if let Some(r) = receiver(handle) {
+        let axis = |v: jint| v.clamp(-32768, 32767) as i16;
+        r.pad(odp::input::Pad { index: index.clamp(0, 3) as u8, buttons: buttons as u16, lt: lt.clamp(0, 255) as u8, rt: rt.clamp(0, 255) as u8, lx: axis(lx), ly: axis(ly), rx: axis(rx), ry: axis(ry) });
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_app_omninput_screen_Odp_decoderFailed(_: JNIEnv, _: JClass, handle: jlong, slot: jint) {
     if let Some(r) = receiver(handle) {

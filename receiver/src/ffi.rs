@@ -149,6 +149,19 @@ pub unsafe extern "C" fn odp_receiver_pen(r: *const Receiver, x: u16, y: u16, pr
     }
 }
 
+/// A game controller's whole state (ODP 1.1): which (0..3), buttons (odp::input::pad bits), triggers 0..255,
+/// sticks -32768..32767 with up positive. Call it with each new state; the library resends as the protocol asks.
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn odp_receiver_pad(r: *const Receiver, index: u8, buttons: u16, lt: u8, rt: u8, lx: i16, ly: i16, rx: i16, ry: i16) {
+    if let Some(r) = r.as_ref() {
+        r.pad(odp::input::Pad { index, buttons, lt, rt, lx, ly, rx, ry });
+    }
+}
+
 /// Touch: `count` contacts as `ids`, `xs`, `ys` and `states` (0 down, 1 move, 2 up), each array `count` long.
 ///
 /// # Safety

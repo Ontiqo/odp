@@ -46,6 +46,9 @@ pub struct Caps {
     /// It sends a pen's position, pressure and buttons (input kind 3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pen: bool,
+    /// Game controllers it sends (input kind 4, ODP 1.1): how many at once (0: none).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub controllers: u8,
     /// DRM systems its film player has ("widevine", "playready", "fairplay"); empty: no cinema.
     #[serde(default)]
     pub cinema: Vec<String>,
@@ -242,4 +245,9 @@ mod tests {
         assert!(String::from_utf8_lossy(&j).contains("\"t\":\"device.rename\""));
         assert_eq!(Message::from_json(&j).unwrap(), m);
     }
+}
+
+/// For `skip_serializing_if`: a zero count is left out.
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }

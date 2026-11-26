@@ -6,6 +6,9 @@
 //! touch state 0 down, 1 move, 2 up. While any contact is down the receiver resends the whole set every 100 ms, so a
 //! lost "up" is repaired. For a pen (3): `x(2) y(2) pressure(2) flags(1)`, pressure 0..65535 and flags [`pen`] (in
 //! range, tip down, barrel button, eraser); while the tip is down the receiver resends it every 100 ms too.
+//! For a game controller (4, ODP 1.1): `pad(1) buttons(2) lt(1) rt(1) lx(2) ly(2) rx(2) ry(2)`: which controller (0..3),
+//! [`pad`] buttons, the triggers 0..255, the sticks -32768..32767 with up positive (as XInput). The whole state goes on
+//! each change and every 100 ms while it isn't at rest; at rest it goes three times, so a lost one is repaired.
 
 /// Pointer buttons (bit flags).
 pub mod buttons {
@@ -24,6 +27,50 @@ pub mod pen {
     pub const BARREL: u8 = 4;
     /// The eraser end is in use.
     pub const ERASER: u8 = 8;
+}
+
+/// Game controller buttons (bit flags), the standard layout (Xbox names; A is the bottom face button).
+pub mod pad {
+    pub const A: u16 = 1;
+    pub const B: u16 = 2;
+    pub const X: u16 = 4;
+    pub const Y: u16 = 8;
+    pub const LEFT_SHOULDER: u16 = 16;
+    pub const RIGHT_SHOULDER: u16 = 32;
+    /// View / Back / Select / Share.
+    pub const VIEW: u16 = 64;
+    /// Menu / Start / Options.
+    pub const MENU: u16 = 128;
+    pub const LEFT_STICK: u16 = 256;
+    pub const RIGHT_STICK: u16 = 512;
+    pub const UP: u16 = 1024;
+    pub const DOWN: u16 = 2048;
+    pub const LEFT: u16 = 4096;
+    pub const RIGHT: u16 = 8192;
+    /// The guide / home button.
+    pub const GUIDE: u16 = 16384;
+}
+
+/// A game controller's whole state (input kind 4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pad {
+    /// Which of the receiver's controllers (0..3).
+    pub index: u8,
+    pub buttons: u16,
+    pub lt: u8,
+    pub rt: u8,
+    pub lx: i16,
+    pub ly: i16,
+    pub rx: i16,
+    pub ry: i16,
+}
+
+impl Pad {
+    /// Nothing held, sticks centred (within a small dead zone), triggers up.
+    pub fn at_rest(&self) -> bool {
+        let still = |v: i16| v.unsigned_abs() < 4000;
+        self.buttons == 0 && self.lt < 8 && self.rt < 8 && still(self.lx) && still(self.ly) && still(self.rx) && still(self.ry)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +94,8 @@ pub enum Event {
     Touch(Vec<Contact>),
     /// A pen (stylus): where, how hard, and its [`pen`] flags.
     Pen { x: u16, y: u16, pressure: u16, flags: u8 },
+    /// A game controller (ODP 1.1).
+    Pad(Pad),
 }
 
 impl Event {
@@ -78,6 +127,16 @@ impl Event {
                 b.push(*flags);
                 b
             }
+            Event::Pad(p) => {
+                let mut b = vec![4u8, p.index];
+                b.extend_from_slice(&p.buttons.to_be_bytes());
+                b.push(p.lt);
+                b.push(p.rt);
+                for v in [p.lx, p.ly, p.rx, p.ry] {
+                    b.extend_from_slice(&v.to_be_bytes());
+                }
+                b
+            }
         }
     }
 
@@ -101,6 +160,16 @@ impl Event {
                 Some(Event::Touch(contacts))
             }
             3 if b.len() >= 8 => Some(Event::Pen { x: u16_at(1)?, y: u16_at(3)?, pressure: u16_at(5)?, flags: b[7] }),
+            4 if b.len() >= 14 => Some(Event::Pad(Pad {
+                index: b[1],
+                buttons: u16_at(2)?,
+                lt: b[4],
+                rt: b[5],
+                lx: u16_at(6)? as i16,
+                ly: u16_at(8)? as i16,
+                rx: u16_at(10)? as i16,
+                ry: u16_at(12)? as i16,
+            })),
             _ => None,
         }
     }
@@ -191,6 +260,18 @@ mod tests {
         assert_eq!(pen.to_bytes().len(), 8);
         assert_eq!(Event::parse(&pen.to_bytes()), Some(pen));
         assert_eq!(Event::parse(&[3, 0, 0, 0]), None);
+        let p = Event::Pad(Pad { index: 1, buttons: pad::A | pad::UP | pad::GUIDE, lt: 255, rt: 3, lx: -32768, ly: 32767, rx: 5, ry: -1 });
+        assert_eq!(p.to_bytes().len(), 14);
+        assert_eq!(Event::parse(&p.to_bytes()), Some(p));
+        assert_eq!(Event::parse(&[4, 0, 0, 0, 0, 0, 0]), None, "a controller cut short");
+    }
+
+    #[test]
+    fn a_controller_is_at_rest_within_its_dead_zone() {
+        assert!(Pad { lx: 3000, ry: -3999, lt: 7, ..Default::default() }.at_rest());
+        assert!(!Pad { buttons: pad::B, ..Default::default() }.at_rest());
+        assert!(!Pad { ly: -20000, ..Default::default() }.at_rest());
+        assert!(!Pad { rt: 200, ..Default::default() }.at_rest());
     }
 
     #[test]
