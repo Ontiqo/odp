@@ -12,6 +12,9 @@ pub const FRAME: usize = 480;
 /// `session.start.audio_codec` and `caps.audio_codecs` names.
 pub const PCM: &str = "pcm";
 pub const OPUS: &str = "opus";
+/// How far behind its input the low-delay Opus decoder's sound is (its 120-sample lookahead): a sender stamps Opus
+/// frames this much earlier, so they play in step with PCM screens'.
+pub const OPUS_DELAY_US: i64 = 2_500;
 
 /// The largest Opus packet we make for one frame (far above what 10 ms at our bitrates needs).
 const MAX_PACKET: usize = 1500;
@@ -43,6 +46,9 @@ impl Encoder {
             ffi::opus_encoder_ctl!(st, ffi::OPUS_SET_PACKET_LOSS_PERC_REQUEST, 5);
             ffi::opus_encoder_ctl!(st, ffi::OPUS_SET_COMPLEXITY_REQUEST, 5);
         }
+        let mut lookahead = 0i32;
+        unsafe { ffi::opus_encoder_ctl!(st, ffi::OPUS_GET_LOOKAHEAD_REQUEST, &mut lookahead) };
+        debug_assert_eq!(lookahead as i64 * 1_000_000 / RATE as i64, OPUS_DELAY_US);
         Ok(Encoder { st, channels: channels as usize })
     }
 
