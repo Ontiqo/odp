@@ -3,7 +3,7 @@
 //! null) on the receiver's own threads.
 
 use crate::{ffi::event_json, Config, Event, Receiver};
-use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
+use jni::objects::{GlobalRef, JClass, JIntArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong, jshort, jstring};
 use jni::{JNIEnv, JavaVM};
 
@@ -84,6 +84,34 @@ pub extern "system" fn Java_app_omninput_screen_Odp_key(_: JNIEnv, _: JClass, ha
 pub extern "system" fn Java_app_omninput_screen_Odp_pointer(_: JNIEnv, _: JClass, handle: jlong, x: jint, y: jint, buttons: jint, wheel: jshort) {
     if let Some(r) = receiver(handle) {
         r.pointer(x as u16, y as u16, buttons as u8, wheel);
+    }
+}
+
+/// Touch: the fingers down now (and any just lifted), as parallel arrays; states 0 down, 1 move, 2 up.
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_touch(env: JNIEnv, _: JClass, handle: jlong, ids: JIntArray, xs: JIntArray, ys: JIntArray, states: JIntArray) {
+    use odp::input::{Contact, TouchState};
+    let read = |a: &JIntArray| -> Vec<i32> {
+        let n = env.get_array_length(a).unwrap_or(0).max(0) as usize;
+        let mut v = vec![0i32; n];
+        let _ = env.get_int_array_region(a, 0, &mut v);
+        v
+    };
+    let (ids, xs, ys, states) = (read(&ids), read(&xs), read(&ys), read(&states));
+    let n = ids.len().min(xs.len()).min(ys.len()).min(states.len()).min(255);
+    let contacts = (0..n)
+        .map(|i| Contact { id: ids[i] as u8, x: xs[i].clamp(0, 65535) as u16, y: ys[i].clamp(0, 65535) as u16, state: match states[i] { 0 => TouchState::Down, 1 => TouchState::Move, _ => TouchState::Up } })
+        .collect();
+    if let Some(r) = receiver(handle) {
+        r.touch(contacts);
+    }
+}
+
+/// A pen (stylus): where and how hard (0..65535 each), its flags (1 in range, 2 tip, 4 barrel, 8 eraser).
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_pen(_: JNIEnv, _: JClass, handle: jlong, x: jint, y: jint, pressure: jint, flags: jint) {
+    if let Some(r) = receiver(handle) {
+        r.pen(x.clamp(0, 65535) as u16, y.clamp(0, 65535) as u16, pressure.clamp(0, 65535) as u16, flags as u8);
     }
 }
 
