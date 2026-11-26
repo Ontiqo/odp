@@ -84,6 +84,17 @@ pub unsafe extern "C" fn odp_receiver_pairing(r: *const Receiver, open: bool) {
     }
 }
 
+/// A meeting room's screen, or not (`Receiver::set_room`).
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_room(r: *const Receiver, on: bool) {
+    if let Some(r) = r.as_ref() {
+        r.set_room(on);
+    }
+}
+
 /// # Safety
 /// `r` comes from `odp_receiver_start`.
 #[no_mangle]

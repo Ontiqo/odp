@@ -108,6 +108,8 @@ struct Inner {
     sound_offset: Arc<AtomicI64>,
     /// The decoder failed: wait for a key frame.
     spoiled: Arc<AtomicBool>,
+    /// A meeting room's screen (`set_room`): a PIN always open, each host forgotten when it leaves.
+    room: AtomicBool,
 }
 
 /// A running receiver. Dropping it does not stop the listener (the screen app lives as long as the process).
@@ -157,6 +159,7 @@ impl Receiver {
             target: Arc::new(AtomicI64::new(0)),
             sound_offset: Arc::new(AtomicI64::new(0)),
             spoiled: Arc::new(AtomicBool::new(false)),
+            room: AtomicBool::new(false),
         });
         (inner.sink)(Event::Listening { port, fingerprint: inner.identity.fingerprint() });
         let me = inner.clone();
@@ -186,6 +189,31 @@ impl Receiver {
         let pin = open.then(odp::pair::new_pin);
         *self.inner.pin.lock().unwrap() = pin.clone().map(|p| (p, Instant::now()));
         (self.inner.sink)(Event::Pin(pin));
+    }
+
+    /// A meeting room's screen, or not: while on, a PIN always shows (a new one when it is used or runs out), and
+    /// each host that showed its screen here is forgotten when its link ends (guests).
+    pub fn set_room(&self, on: bool) {
+        let was = self.inner.room.swap(on, Ordering::SeqCst);
+        if on && !was {
+            self.pairing(true);
+            let me = self.clone();
+            std::thread::spawn(move || {
+                while me.inner.room.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let stale = me.inner.pin.lock().unwrap().as_ref().is_none_or(|(_, t)| t.elapsed() > PIN_LIFE - Duration::from_secs(20));
+                    if stale && me.inner.room.load(Ordering::SeqCst) {
+                        me.pairing(true);
+                    }
+                }
+            });
+        } else if !on && was {
+            self.pairing(false);
+        }
+    }
+
+    pub fn room(&self) -> bool {
+        self.inner.room.load(Ordering::SeqCst)
     }
 
     /// Paired hosts: (id, name).
@@ -289,6 +317,12 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
             *inner.pin.lock().unwrap() = None;
             (inner.sink)(Event::Pin(None));
             (inner.sink)(Event::Paired { host: link.peer_name.clone() });
+            // A meeting room: the next person's PIN at once.
+            if inner.room.load(Ordering::SeqCst) {
+                let pin = odp::pair::new_pin();
+                *inner.pin.lock().unwrap() = Some((pin.clone(), Instant::now()));
+                (inner.sink)(Event::Pin(Some(pin)));
+            }
         }
     }
     let (tx, rx) = channel::<Message>();
@@ -374,6 +408,12 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     }
     *inner.media.lock().unwrap() = None;
     *inner.out.lock().unwrap() = None;
+    // A meeting room: the guest is forgotten on leaving.
+    if inner.room.load(Ordering::SeqCst) {
+        let mut hosts = inner.hosts.lock().unwrap();
+        hosts.retain(|h| h.id != link.peer_id);
+        save_hosts(&inner.cfg.dir, &hosts);
+    }
 }
 
 /// After a lost frame, only a key frame may go to the decoder; asks the host for one (at most every 250 ms).
@@ -471,6 +511,33 @@ fn start_media(inner: &Arc<Inner>, socket: UdpSocket, media: ChannelKeys, input:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A meeting room's screen shows a PIN at once and keeps it; off, the PIN goes.
+    #[test]
+    fn a_meeting_room_always_shows_a_pin() {
+        let dir = std::env::temp_dir().join(format!("odp-room-{}", std::process::id()));
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let tx = Mutex::new(tx);
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let r = Receiver::start(Config { dir: dir.clone(), name: "Room 2".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        r.set_room(true);
+        assert!(r.room());
+        let pin = rx.iter().find_map(|e| match e {
+            Event::Pin(p) => Some(p),
+            _ => None,
+        });
+        assert!(matches!(pin, Some(Some(ref p)) if p.len() == 6), "{pin:?}");
+        r.set_room(false);
+        let gone = rx.iter().find_map(|e| match e {
+            Event::Pin(p) => Some(p),
+            _ => None,
+        });
+        assert_eq!(gone, Some(None));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// With 54330-54332 taken, a receiver still listens (on any free port), and a bad folder says what went wrong.
     #[test]

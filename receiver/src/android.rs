@@ -55,6 +55,14 @@ pub extern "system" fn Java_app_omninput_screen_Odp_pairing(_: JNIEnv, _: JClass
     }
 }
 
+/// A meeting room's screen, or not (`Receiver::set_room`).
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_room(_: JNIEnv, _: JClass, handle: jlong, on: jboolean) {
+    if let Some(r) = receiver(handle) {
+        r.set_room(on != 0);
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_app_omninput_screen_Odp_key(_: JNIEnv, _: JClass, handle: jlong, usage: jint, down: jboolean, modifiers: jint) {
     if let Some(r) = receiver(handle) {
