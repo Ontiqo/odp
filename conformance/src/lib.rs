@@ -365,7 +365,11 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     let target = std::net::SocketAddr::new(link.stream().peer_addr().map_err(|e| e.to_string())?.ip(), udp_port);
     let local: std::net::IpAddr = if target.ip().is_loopback() { [127, 0, 0, 1].into() } else { [0, 0, 0, 0].into() };
     let socket = UdpSocket::bind((local, 0)).map_err(|e| e.to_string())?;
+    let _ = socket.set_nonblocking(true);
     let (mut sealer, _) = link.session.channel_keys(Channel::Media).open(Channel::Media);
+    // What the screen sends back (pointer, touch, pen) is printed, one line each.
+    let (_, mut input) = link.session.channel_keys(Channel::Input).open(Channel::Input);
+    let mut back = [0u8; 2048];
     let mut packets = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
     let video = frames();
     let started = Instant::now();
@@ -377,12 +381,18 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
             let _ = socket.send_to(&d, target);
         }
         next += 1;
+        while let Ok((n, _)) = socket.recv_from(&mut back) {
+            if let Some(e) = odp::input::open(&back[..n], &mut input) {
+                println!("input {e:?}");
+            }
+        }
         // A key frame asked for: the loop starts again from its first frame (a key frame).
         let _ = link.stream().set_read_timeout(Some(Duration::from_millis(33)));
         if matches!(link.stream().peek(&mut probe), Ok(n) if n > 0) {
             let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));
             match link.recv() {
                 Ok(Some(Message::Keyframe)) => next = 0,
+                Ok(Some(Message::Key { usage, down, .. })) => println!("key {usage} {down}"),
                 Ok(None) | Ok(Some(Message::Bye)) | Err(_) => break,
                 _ => {}
             }
