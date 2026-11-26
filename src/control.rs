@@ -49,9 +49,19 @@ pub struct Caps {
     /// Game controllers it sends (input kind 4, ODP 1.1): how many at once (0: none).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub controllers: u8,
+    /// It takes `room.watch` and `room.end` from the computers that own it (ODP 1.1): moderating who shows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub room: bool,
     /// DRM systems its film player has ("widevine", "playready", "fairplay"); empty: no cinema.
     #[serde(default)]
     pub cinema: Vec<String>,
+}
+
+/// A computer showing on a receiver (`room.presenters`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Presenter {
+    pub slot: u32,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -153,6 +163,16 @@ pub enum Message {
     /// controllers as controllers (`on`), so the receiver sends them as such and not as keys.
     #[serde(rename = "input.controllers")]
     Controllers { on: bool },
+    /// ODP 1.1, host to receiver, only to receivers whose caps say `room`: this host (one paired with the screen
+    /// outside meeting-room mode: an owner) wants `room.presenters` while `on`.
+    #[serde(rename = "room.watch")]
+    RoomWatch { on: bool },
+    /// ODP 1.1, receiver to an owner watching: the computers showing here now, each by its slot and name.
+    #[serde(rename = "room.presenters")]
+    RoomPresenters { list: Vec<Presenter> },
+    /// ODP 1.1, an owner to the receiver: end that presenter's link (as the screen's own "end" does).
+    #[serde(rename = "room.end")]
+    RoomEnd { slot: u32 },
     #[serde(rename = "cinema.open")]
     CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, state: PlayState, at_us: i64 },
     #[serde(rename = "cinema.control")]

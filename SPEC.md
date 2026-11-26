@@ -202,6 +202,12 @@ is the set of receivers in one synced presentation.
 ## 1.1 (2026-11-27)
 - Game controllers (L6, kind 4, `caps.controllers`, `input.controllers`). `hello` lists `odp/1.1` first; a 1.0
   side ignores kind 4.
+- Moderating who shows (L3): a receiver with `caps.room` accepts `room.watch {on}` from an **owner** (a host paired
+  with it outside meeting-room mode; guests who joined with a meeting room's code are not owners) and then sends it
+  `room.presenters {list: [{slot, name}]}` at once and whenever someone starts or stops showing; `room.end {slot}` from
+  an owner ends that presenter's link, as the screen's own controls do. A host may hold a link that shows nothing,
+  only to watch. Hosts send `room.*` only to receivers with `caps.room` (a 1.0 receiver would take an unknown message
+  as an error); receivers send `room.presenters` only to owners who asked.
 
 ## Settled for 1.0, and later
 - Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.

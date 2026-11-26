@@ -102,6 +102,14 @@ struct Slot {
     spoiled: Arc<AtomicBool>,
     /// The host takes game controllers as controllers (input.controllers, ODP 1.1).
     controllers: Arc<AtomicBool>,
+    /// The host's name, as presenters are listed.
+    name: String,
+    /// An owner (paired outside meeting-room mode), which may watch and end presenters (room.*, ODP 1.1).
+    owner: bool,
+    /// It shows a picture now.
+    showing: AtomicBool,
+    /// It asked for the presenters (room.watch).
+    watching: AtomicBool,
 }
 
 /// The session's media side, for input and the clock.
@@ -128,6 +136,8 @@ struct Inner {
     room: AtomicBool,
     /// Game controllers' last states and how often each goes again (`pad`).
     pads: Mutex<Pads>,
+    /// Hosts that paired while this was a meeting room's screen: guests, never owners.
+    room_guests: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Each controller's last state and the sends it has left (u8::MAX: until it is at rest), and whether the resending
@@ -174,6 +184,8 @@ impl Receiver {
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         // A screen that plays sound takes it as Opus too (decoded here, so the app still gets PCM).
         let mut cfg = cfg;
+        // Owners may watch and end presenters (room.*, ODP 1.1).
+        cfg.caps.room = true;
         if cfg.caps.audio_channels > 0 && !cfg.caps.audio_codecs.iter().any(|c| c == odp::audio::OPUS) {
             cfg.caps.audio_codecs.push(odp::audio::OPUS.into());
         }
@@ -190,6 +202,7 @@ impl Receiver {
             focus: AtomicU32::new(0),
             room: AtomicBool::new(false),
             pads: Mutex::new(Pads::default()),
+            room_guests: Mutex::new(Default::default()),
         });
         (inner.sink)(Event::Listening { port, fingerprint: inner.identity.fingerprint() });
         let me = inner.clone();
@@ -417,6 +430,15 @@ impl Receiver {
     }
 }
 
+/// Who shows here now, to each owner watching (room.presenters, ODP 1.1).
+fn tell_presenters(inner: &Arc<Inner>) {
+    let slots = inner.slots.lock().unwrap();
+    let list: Vec<odp::control::Presenter> = slots.iter().filter(|s| s.showing.load(Ordering::SeqCst)).map(|s| odp::control::Presenter { slot: s.id, name: s.name.clone() }).collect();
+    for s in slots.iter().filter(|s| s.owner && s.watching.load(Ordering::SeqCst)) {
+        let _ = s.out.send(Message::RoomPresenters { list: list.clone() });
+    }
+}
+
 fn load_hosts(dir: &std::path::Path) -> Vec<Host> {
     let Ok(text) = std::fs::read_to_string(dir.join("hosts.json")) else { return Vec::new() };
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str(&text) else { return Vec::new() };
@@ -469,8 +491,9 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
             *inner.pin.lock().unwrap() = None;
             (inner.sink)(Event::Pin(None));
             (inner.sink)(Event::Paired { host: link.peer_name.clone() });
-            // A meeting room: the next person's PIN at once.
+            // A meeting room: a guest (never an owner), and the next person's PIN at once.
             if inner.room.load(Ordering::SeqCst) {
+                inner.room_guests.lock().unwrap().insert(link.peer_id.clone());
                 let pin = odp::pair::new_pin();
                 *inner.pin.lock().unwrap() = Some((pin.clone(), Instant::now()));
                 (inner.sink)(Event::Pin(Some(pin)));
@@ -487,6 +510,10 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         sound_offset: Arc::new(AtomicI64::new(0)),
         spoiled: Arc::new(AtomicBool::new(false)),
         controllers: Arc::new(AtomicBool::new(false)),
+        name: link.peer_name.clone(),
+        owner: !inner.room_guests.lock().unwrap().contains(&link.peer_id),
+        showing: AtomicBool::new(false),
+        watching: AtomicBool::new(false),
     });
     inner.slots.lock().unwrap().push(slot.clone());
     // Keys go to a linked host before it shows anything too (none other is focused).
@@ -520,6 +547,27 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         match link.recv() {
             Ok(None) | Ok(Some(Message::Bye)) => break,
             Ok(Some(Message::Controllers { on })) => slot.controllers.store(on, Ordering::SeqCst),
+            // An owner watching who shows (ODP 1.1); a guest is told no.
+            Ok(Some(Message::RoomWatch { on })) => {
+                if slot.owner {
+                    slot.watching.store(on, Ordering::SeqCst);
+                    if on {
+                        tell_presenters(inner);
+                    }
+                } else {
+                    let _ = link.send(&Message::Error { id: None, code: "not_owner".into(), text: "Only a computer paired with this screen outside a meeting can see who shows.".into() });
+                }
+            }
+            // An owner ending a presenter.
+            Ok(Some(Message::RoomEnd { slot: which })) => {
+                if slot.owner {
+                    if let Some(s) = inner.slots.lock().unwrap().iter().find(|s| s.id == which) {
+                        let _ = s.out.send(Message::Bye);
+                    }
+                } else {
+                    let _ = link.send(&Message::Error { id: None, code: "not_owner".into(), text: "Only a computer paired with this screen outside a meeting can end a presenter.".into() });
+                }
+            }
             Ok(Some(Message::SessionStart { id, codec, w, h, region, audio_codec, .. })) => {
                 let opus = audio_codec.as_deref() == Some(odp::audio::OPUS);
                 if let Some(s) = stop_media.take() {
@@ -542,12 +590,16 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 inner.focus.store(slot.id, Ordering::SeqCst);
                 let _ = link.send(&Message::SessionOk { id, udp_port });
                 (inner.sink)(Event::Started { slot: slot.id, host: link.peer_name.clone(), codec, w, h, region });
+                slot.showing.store(true, Ordering::SeqCst);
+                tell_presenters(inner);
             }
             Ok(Some(Message::SessionStop)) => {
                 if let Some(s) = stop_media.take() {
                     s.store(true, Ordering::SeqCst);
                     (inner.sink)(Event::Stopped { slot: slot.id, host: link.peer_name.clone() });
                 }
+                slot.showing.store(false, Ordering::SeqCst);
+                tell_presenters(inner);
             }
             Ok(Some(Message::SyncTarget { delay_us })) => slot.target.store(delay_us, Ordering::SeqCst),
             Ok(Some(Message::SyncOffset { us })) => slot.sound_offset.store(us.clamp(-500_000, 500_000), Ordering::SeqCst),
@@ -589,6 +641,9 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         if inner.focus.load(Ordering::SeqCst) == slot.id {
             inner.focus.store(slots.last().map_or(0, |s| s.id), Ordering::SeqCst);
         }
+    }
+    if slot.showing.load(Ordering::SeqCst) {
+        tell_presenters(inner);
     }
     // A meeting room: the guest is forgotten once it has shown its screen and left (not after the short link that
     // only paired it, which ends before it casts).
@@ -812,6 +867,87 @@ mod tests {
     }
 
     /// Two hosts show here at once (a split screen): their frames arrive in two slots, and keys go to the focused one.
+    /// An owner (paired outside a meeting) watches who shows and ends a presenter; a meeting room's guest can't.
+    #[test]
+    fn an_owner_sees_who_shows_and_ends_them() {
+        let dir = std::env::temp_dir().join(format!("odp-receiver-owner-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel::<Event>();
+        let tx = Mutex::new(tx);
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let r = Receiver::start(Config { dir: dir.clone(), name: "Room 2".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        let pin_now = |rx: &std::sync::mpsc::Receiver<Event>| loop {
+            if let Event::Pin(Some(p)) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break p;
+            }
+        };
+        let connect = |host: &str, name: &str, pin: &str| {
+            let id = Identity::generate();
+            let me = odp::link::Me { identity: &id, id: host, name, caps: Caps::default() };
+            odp::link::host(TcpStream::connect(("127.0.0.1", r.port())).unwrap(), me, None, Some(pin)).unwrap()
+        };
+        // The owner pairs before the room opens, and says it takes room.* (caps.room).
+        r.pairing(true);
+        let pin = pin_now(&rx);
+        let mut owner = connect("owner", "Facilities", &pin);
+        assert!(owner.peer_caps.room, "the screen says it takes room.*");
+        let _ = owner.stream().set_read_timeout(Some(Duration::from_secs(5)));
+        owner.send(&Message::RoomWatch { on: true }).unwrap();
+        let first = loop {
+            if let Some(Message::RoomPresenters { list }) = owner.recv().unwrap() {
+                break list;
+            }
+        };
+        assert!(first.is_empty(), "nobody shows yet");
+        // A meeting: a guest joins with the room's PIN and shows.
+        r.set_room(true);
+        let pin = pin_now(&rx);
+        let mut guest = connect("guest", "Ana's laptop", &pin);
+        guest.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 640, h: 360, fps: 30, bitrate_kbps: 2000, audio: false, audio_codec: None, group: None, region: None }).unwrap();
+        let _ = guest.stream().set_read_timeout(Some(Duration::from_secs(5)));
+        assert!(matches!(guest.recv().unwrap(), Some(Message::SessionOk { .. })));
+        let shows = loop {
+            if let Some(Message::RoomPresenters { list }) = owner.recv().unwrap() {
+                if !list.is_empty() {
+                    break list;
+                }
+            }
+        };
+        assert_eq!(shows.len(), 1);
+        assert_eq!(shows[0].name, "Ana's laptop");
+        // The guest may not watch.
+        guest.send(&Message::RoomWatch { on: true }).unwrap();
+        let refused = loop {
+            match guest.recv().unwrap() {
+                Some(Message::Error { code, .. }) => break code,
+                Some(_) => continue,
+                None => panic!("closed"),
+            }
+        };
+        assert_eq!(refused, "not_owner");
+        // The owner ends the guest's presentation: the guest hears Bye; the list empties.
+        owner.send(&Message::RoomEnd { slot: shows[0].slot }).unwrap();
+        let mut said_bye = false;
+        while let Ok(Some(m)) = guest.recv() {
+            if m == Message::Bye {
+                said_bye = true;
+                break;
+            }
+        }
+        assert!(said_bye, "the guest wasn't sent away");
+        let after = loop {
+            if let Some(Message::RoomPresenters { list }) = owner.recv().unwrap() {
+                break list;
+            }
+        };
+        assert!(after.is_empty(), "{after:?}");
+        r.set_room(false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn two_hosts_show_at_once_in_their_own_slots() {
         let dir = std::env::temp_dir().join(format!("odp-receiver-slots-{}", std::process::id()));
