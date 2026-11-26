@@ -356,7 +356,14 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     let id = format!("odp-check-{}", &identity.fingerprint()[..4]);
     let me = Me { identity: &identity, id: &id, name, caps: Caps::default() };
     let mut link = host(TcpStream::connect(&cfg.address).map_err(|e| e.to_string())?, me, None, Some(&cfg.pin))?;
-    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, audio_codec: None, group: None, region: None })?;
+    // Sound too when the receiver plays it: a short quiet beep each second, as Opus when it takes it.
+    let audio = link.peer_caps.audio_channels > 0;
+    let opus = audio && link.peer_caps.audio_codecs.iter().any(|c| c == odp::audio::OPUS);
+    let audio_codec = audio.then(|| if opus { odp::audio::OPUS } else { odp::audio::PCM }.to_string());
+    if let Some(c) = &audio_codec {
+        println!("sound: {c}");
+    }
+    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio, audio_codec, group: None, region: None })?;
     let udp_port = wait_for(&mut link, Duration::from_secs(5), |m| match m {
         Message::SessionOk { udp_port, .. } => Some(*udp_port),
         _ => None,
@@ -371,8 +378,12 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     let (_, mut input) = link.session.channel_keys(Channel::Input).open(Channel::Input);
     let mut back = [0u8; 2048];
     let mut packets = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
+    let mut sound = odp::media::Packetizer::new(odp::media::Kind::Audio, 1);
+    let mut encoder = if opus { Some(odp::audio::Encoder::new(2, 128_000)?) } else { None };
     let video = frames();
     let started = Instant::now();
+    let start_us = now_us();
+    let mut sent_sound = 0i64;
     let mut next = 0usize;
     let mut probe = [0u8; 1];
     while started.elapsed() < Duration::from_secs(seconds) {
@@ -381,6 +392,18 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
             let _ = socket.send_to(&d, target);
         }
         next += 1;
+        // The sound frames due by now (10 ms each).
+        while audio && sent_sound * 10_000 < now_us() - start_us {
+            let pcm = beep(sent_sound);
+            let data = match encoder.as_mut() {
+                Some(e) => e.encode(&pcm)?,
+                None => odp::audio::to_bytes(&pcm),
+            };
+            for d in sound.frame(&data, start_us + sent_sound * 10_000, false, &mut sealer) {
+                let _ = socket.send_to(&d, target);
+            }
+            sent_sound += 1;
+        }
         while let Ok((n, _)) = socket.recv_from(&mut back) {
             if let Some(e) = odp::input::open(&back[..n], &mut input) {
                 println!("input {e:?}");
@@ -401,6 +424,18 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     let _ = link.send(&Message::SessionStop);
     let _ = link.send(&Message::Bye);
     Ok(())
+}
+
+/// Sound frame `n` (10 ms, stereo): a 660 Hz beep, quiet, for the first 150 ms of each second; silence otherwise.
+fn beep(n: i64) -> Vec<i16> {
+    let in_second = (n % 100) as usize;
+    (0..odp::audio::FRAME)
+        .flat_map(|i| {
+            let t = in_second * odp::audio::FRAME + i;
+            let v = if in_second < 15 { ((t as f32 * 660.0 * std::f32::consts::TAU / 48_000.0).sin() * 2_500.0) as i16 } else { 0 };
+            [v, v]
+        })
+        .collect()
 }
 
 /// The first message `want` accepts within `time` (others are passed over).
