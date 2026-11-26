@@ -1,6 +1,6 @@
 # Open Display Protocol (ODP): version 0.1 draft
 
-Status: **draft**, not frozen (2026-11-25). The reference implementation is this repository's `odp` crate.
+Status: **draft**, not frozen (2026-11-26). The reference implementation is this repository's `odp` crate.
 This text is licensed under CC BY 4.0; the code in this repository under Apache-2.0.
 
 Goals: a receiver can be written on any platform from this document alone. It must not depend on Omninput's private
@@ -144,21 +144,37 @@ is the set of receivers in one synced presentation.
 - The reference receiver (`receiver/`) and a conformance host (`conformance/`, `odp-check`: a test stream, a
   wrong PIN, a lost frame, a replayed packet, clock pings, delay reports, keys and Cinema) are in the repository.
 
-## What runs today (2026-11)
-- Hosts: Windows (desktop capture, H.264 on the graphics card or in software, one encoder for several receivers, each
-  with its own session); Cinema's `cinema.*` from a browser extension that notices protected video.
+## What runs today (2026-11-26)
+- Hosts: Omninput on Windows (desktop capture with the pointer drawn in, H.264 on the graphics card or in software),
+  macOS (ScreenCaptureKit and VideoToolbox) and Linux (GStreamer: the desktop's screen-cast portal on Wayland or the
+  X11 screen; x264, VA-API, OpenH264 or V4L2), one encoder for every receiver of a mirror, each with its own session;
+  `session.start {mode: extend, w, h}` gives the receiver a display of its own made for it (a Mac's virtual display,
+  Wayland's virtual monitor), with its own encoder. Cinema's `cinema.*` from a browser extension that notices
+  protected video.
+- Sound inside ODP: L4 `stream 1`, 16-bit PCM, 48 kHz stereo, 10 ms frames (the `rt` profile on a LAN), each frame's
+  `pts_us` the moment it should be heard on the shared clock; receivers play every sample at its time, correcting by
+  up to 0.2 % in speed and easing larger steps out over several frames (each frame cross-faded with itself shifted).
+  While no sound plays, the group's `sync.target` is 0 (each picture shown as soon as it is decoded).
+- Tuning (the host's microphone): the host plays a few short sweeps through each receiver in turn, times where each
+  is heard, and sends each receiver `sync.offset {us}` (how much later to play) so every screen is heard together.
+  This takes the place of `cal.chirp` for receivers that can't take part themselves; hosts keep the offsets per
+  receiver.
 - Receivers, all checked with `odp-check`:
   - Omninput on Windows, macOS and Linux desktops and kiosks: Basic, Synced, Interactive and Cinema (the title in
     Edge or Chrome, steered over the DevTools protocol). Kiosks also take `device.rename`.
   - The reference receiver (`receiver/`), and the TV apps built on it: Android TV / Google TV (checked on a
     Chromecast with Google TV and a phone: Basic, Synced, Interactive, Cinema through the service app's media
-    session) and Apple TV (checked in the simulator: Basic, Synced, Cinema).
-  - Discovery: the TV apps advertise `_odp-receiver._tcp`; Omninput hosts browse for it.
-- Not yet: calibration (`cal.*`), extended desktops (virtual displays), audio inside ODP (Omninput sends a cast's
-  sound through its own sound sharing for now), FEC. The web profile runs in browsers (Omninput serves it). NACK: the reference receiver asks for lost
-  packets (`media.nack`, gaps of up to 64 in the sequence) and `odp-check` checks it.
+    session) and Apple TV (checked on an Apple TV HD: Basic, Synced, Cinema).
+  - Discovery: the TV apps advertise `_odp-receiver._tcp`, under a name of their own for each start (Android keeps an
+    old registration for a while); Omninput hosts browse for it and follow a paired receiver to a new address by
+    its fingerprint (`fp` in the TXT record).
+- Not yet: `cal.chirp` in receivers (hosts tune instead, above), `sync.output` from receivers (re-tuning when a
+  screen's sound output changes), FEC, touch. The web profile is a protocol option; Omninput itself doesn't ship a
+  browser receiver. NACK: the reference receiver asks for lost packets (`media.nack`, gaps of up to 64 in the
+  sequence) and `odp-check` checks it.
 
 ## Open questions before 1.0
-- Whether a cast's sound moves into L4 audio streams in 1.0 (with the latency reports that keep it in step), or stays
-  with the host's own transport until 1.1.
+- Opus for sound beyond the `rt` profile (Wi-Fi with loss, the web profile): in 1.0, or PCM only until 1.1.
 - Whether multichannel audio and HDR metadata belong in 1.0 or 1.1.
+- Walls (one picture across several receivers, each showing its part) and split screens (several hosts on one
+  receiver): `session.start` fields for a receiver's part of a larger picture, or several sessions at once.
