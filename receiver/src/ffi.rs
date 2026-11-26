@@ -23,7 +23,8 @@ pub fn event_json(e: &Event) -> serde_json::Value {
         Event::Listening { port, fingerprint } => json!({"t": "listening", "port": port, "fingerprint": fingerprint}),
         Event::Pin(pin) => json!({"t": "pin", "pin": pin}),
         Event::Paired { host } => json!({"t": "paired", "host": host}),
-        Event::Started { host, codec, w, h } => json!({"t": "started", "host": host, "codec": codec, "w": w, "h": h}),
+        // region: {x, y, w, h}, each 0..65535 of the picture (a wall's screen), or absent.
+        Event::Started { host, codec, w, h, region } => json!({"t": "started", "host": host, "codec": codec, "w": w, "h": h, "region": region}),
         Event::Frame { show_at_us, captured_us, key, .. } => json!({"t": "frame", "show_at_us": show_at_us, "captured_us": captured_us, "key": key}),
         Event::Audio { play_at_us, .. } => json!({"t": "audio", "play_at_us": play_at_us}),
         Event::Stopped { host } => json!({"t": "stopped", "host": host}),

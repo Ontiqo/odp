@@ -65,6 +65,15 @@ pub enum Mode {
     Cinema,
 }
 
+/// A part of the picture, each edge as a fraction of its width or height (0..=65535): a screen of a wall shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Region {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlayState {
@@ -85,7 +94,20 @@ pub enum Message {
     #[serde(rename = "session.offer")]
     SessionOffer { ephemeral: String, identity: String, signature: String },
     #[serde(rename = "session.start")]
-    SessionStart { id: u32, mode: Mode, codec: String, w: u32, h: u32, fps: u32, bitrate_kbps: u32, audio: bool, group: Option<String> },
+    SessionStart {
+        id: u32,
+        mode: Mode,
+        codec: String,
+        w: u32,
+        h: u32,
+        fps: u32,
+        bitrate_kbps: u32,
+        audio: bool,
+        group: Option<String>,
+        /// A wall: the part of the picture this receiver shows, enlarged to fill its screen (absent: all of it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        region: Option<Region>,
+    },
     #[serde(rename = "session.ok")]
     SessionOk { id: u32, udp_port: u16 },
     #[serde(rename = "session.update")]
@@ -171,10 +193,14 @@ mod tests {
 
     #[test]
     fn messages_name_their_type_and_round_trip() {
-        let m = Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1920, h: 1080, fps: 60, bitrate_kbps: 20_000, audio: true, group: None };
+        let m = Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1920, h: 1080, fps: 60, bitrate_kbps: 20_000, audio: true, group: None, region: None };
         let json = String::from_utf8(m.to_json()).unwrap();
         assert!(json.starts_with(r#"{"t":"session.start","id":1,"mode":"mirror""#), "{json}");
+        assert!(!json.contains("region"), "{json}");
         assert_eq!(Message::from_json(json.as_bytes()).unwrap(), m);
+        // A wall's screen: the top-right quarter.
+        let wall = Message::SessionStart { id: 2, mode: Mode::Mirror, codec: "h264".into(), w: 0, h: 0, fps: 30, bitrate_kbps: 12_000, audio: false, group: Some("lobby".into()), region: Some(Region { x: 32768, y: 0, w: 32767, h: 32768 }) };
+        assert_eq!(Message::from_json(&wall.to_json()).unwrap(), wall);
     }
 
     #[test]

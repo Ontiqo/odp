@@ -49,7 +49,8 @@ pub enum Event {
     Pin(Option<String>),
     Paired { host: String },
     /// A host started showing its screen here: frames follow.
-    Started { host: String, codec: String, w: u32, h: u32 },
+    /// `region`: a screen of a wall shows only this part of the picture, enlarged to fill it.
+    Started { host: String, codec: String, w: u32, h: u32, region: Option<odp::control::Region> },
     /// One encoded frame (H.264 Annex-B for "h264"), to show at `show_at_us` on this computer's clock (microseconds
     /// since 1970; 0 while the clock is still being measured: show it now). `captured_us` is when the host captured
     /// it, on this clock (0 until measured): a screen reports its delay from there to its picture with `latency`.
@@ -355,7 +356,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         let _ = link.stream().set_read_timeout(Some(Duration::from_secs(30)));
         match link.recv() {
             Ok(None) | Ok(Some(Message::Bye)) => break,
-            Ok(Some(Message::SessionStart { id, codec, w, h, .. })) => {
+            Ok(Some(Message::SessionStart { id, codec, w, h, region, .. })) => {
                 if let Some(s) = stop_media.take() {
                     s.store(true, Ordering::SeqCst);
                 }
@@ -374,7 +375,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 stop_media = Some(stop);
                 showed = true;
                 let _ = link.send(&Message::SessionOk { id, udp_port });
-                (inner.sink)(Event::Started { host: link.peer_name.clone(), codec, w, h });
+                (inner.sink)(Event::Started { host: link.peer_name.clone(), codec, w, h, region });
             }
             Ok(Some(Message::SessionStop)) => {
                 if let Some(s) = stop_media.take() {
@@ -592,7 +593,7 @@ mod tests {
         let me = odp::link::Me { identity: &host_id, id: "host1", name: "Laptop", caps: Caps::default() };
         let mut link = odp::link::host(stream, me, None, Some(&pin)).unwrap();
         assert_eq!(link.peer_name, "Test TV");
-        link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None }).unwrap();
+        link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None, region: None }).unwrap();
         let udp_port = match link.recv().unwrap().unwrap() {
             Message::SessionOk { udp_port, .. } => udp_port,
             m => panic!("{m:?}"),

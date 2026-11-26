@@ -373,7 +373,7 @@ mod tests {
                 let mut link = odp::link::host(s, me, known, if known.is_none() { Some(&pin2) } else { None }).unwrap();
                 let peer = link.peer_key;
                 if round == 1 {
-                    link.send(&Message::SessionStart { id: 1, mode: control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 1000, audio: false, group: None }).unwrap();
+                    link.send(&Message::SessionStart { id: 1, mode: control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 1000, audio: false, group: None, region: None }).unwrap();
                     let ok = link.recv().unwrap();
                     assert!(matches!(ok, Some(Message::SessionOk { .. })), "{ok:?}");
                     let (mut sealer, _) = link.session.channel_keys(Channel::Media).open(Channel::Media);

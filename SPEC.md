@@ -77,7 +77,8 @@ is the set of receivers in one synced presentation.
   `input` (`keyboard, pointer, touch{max_contacts}`), `cinema` (`{drm: [widevine|playready|fairplay], level}` or
   absent), `profile` (`rt` | `web`).
 - `session.start {mode: mirror|extend|cinema, video{codec, w, h, fps, bitrate}, audio{codec, rate, channels},
-  udp_port, group}` → `session.ok {udp_port}`.
+  udp_port, group, region?}` → `session.ok {udp_port}`. `region {x, y, w, h}` (each 0..65535 of the picture's width or
+  height): a screen of a wall shows only that part, enlarged to fill it; absent, the whole picture.
 - `session.update` (resolution, bitrate, cadence 24/30/60, group membership), `session.pause`, `session.stop`.
 - `device.rename {name}`: a paired host names a device nobody sits at (a kiosk, a TV box); a device with its own
   owner answers `error` and keeps its name.
@@ -176,5 +177,5 @@ is the set of receivers in one synced presentation.
 ## Open questions before 1.0
 - Opus for sound beyond the `rt` profile (Wi-Fi with loss, the web profile): in 1.0, or PCM only until 1.1.
 - Whether multichannel audio and HDR metadata belong in 1.0 or 1.1.
-- Walls (one picture across several receivers, each showing its part) and split screens (several hosts on one
-  receiver): `session.start` fields for a receiver's part of a larger picture, or several sessions at once.
+- Split screens (several hosts on one receiver): several sessions at once. (Walls: `session.start.region`, above; a
+  host may also send each wall screen its own part, cropped before encoding, with no `region`.)
