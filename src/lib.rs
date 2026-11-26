@@ -6,11 +6,13 @@
 //! - [`pair`]: PIN pairing (L2)
 //! - [`session`]: session keys and sealing per channel (L2)
 //! - [`clock`]: the shared clock (L5)
+//! - [`audio`]: sound frames, PCM or Opus (L4)
 //! - [`media`]: media datagrams, fragmentation and reassembly (L4)
 //! - [`control`]: the control channel's framing and messages (L1, L3, L5, L7)
 //! - [`input`]: pointer and touch from a receiver (L6)
 //! - [`link`]: the handshake over a byte stream, pairing included, and the encrypted control link (L1, L2)
 
+pub mod audio;
 pub mod clock;
 pub mod control;
 pub mod input;

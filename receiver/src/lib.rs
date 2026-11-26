@@ -160,6 +160,11 @@ impl Receiver {
             })?
         };
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        // A screen that plays sound takes it as Opus too (decoded here, so the app still gets PCM).
+        let mut cfg = cfg;
+        if cfg.caps.audio_channels > 0 && !cfg.caps.audio_codecs.iter().any(|c| c == odp::audio::OPUS) {
+            cfg.caps.audio_codecs.push(odp::audio::OPUS.into());
+        }
         let inner = Arc::new(Inner {
             cfg,
             identity,
@@ -444,7 +449,8 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         let _ = link.stream().set_read_timeout(Some(Duration::from_secs(30)));
         match link.recv() {
             Ok(None) | Ok(Some(Message::Bye)) => break,
-            Ok(Some(Message::SessionStart { id, codec, w, h, region, .. })) => {
+            Ok(Some(Message::SessionStart { id, codec, w, h, region, audio_codec, .. })) => {
+                let opus = audio_codec.as_deref() == Some(odp::audio::OPUS);
                 if let Some(s) = stop_media.take() {
                     s.store(true, Ordering::SeqCst);
                 }
@@ -459,7 +465,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                 let stop = Arc::new(AtomicBool::new(false));
                 let media_keys = link.session.channel_keys(Channel::Media);
                 let input_keys = link.session.channel_keys(Channel::Input);
-                start_media(inner, &slot, socket, media_keys, input_keys, stop.clone());
+                start_media(inner, &slot, socket, media_keys, input_keys, stop.clone(), opus);
                 stop_media = Some(stop);
                 showed = true;
                 inner.focus.store(slot.id, Ordering::SeqCst);
@@ -552,7 +558,7 @@ impl KeyGate {
 }
 
 /// The session's UDP side: clock pings, frames, and the socket and sealer input goes out with.
-fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: ChannelKeys, input: ChannelKeys, stop: Arc<AtomicBool>) {
+fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: ChannelKeys, input: ChannelKeys, stop: Arc<AtomicBool>, opus: bool) {
     let host: Arc<Mutex<Option<SocketAddr>>> = Arc::new(Mutex::new(None));
     if let Ok(clone) = socket.try_clone() {
         *slot.media.lock().unwrap() = Some(Media { socket: clone, input: input.open(Channel::Input).0, host: host.clone() });
@@ -567,6 +573,7 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
         let _ = socket.set_read_timeout(Some(Duration::from_millis(200)));
         let mut re = odp::media::Reassembler::default();
         let mut gate = KeyGate::default();
+        let mut sound = Sound::new(opus);
         let mut buf = vec![0u8; 2048];
         while !stop.load(Ordering::SeqCst) {
             let known = *host.lock().unwrap();
@@ -596,7 +603,9 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
             if frame.kind == odp::media::Kind::Audio {
                 let captured = clock.to_local(frame.pts_us).unwrap_or(0);
                 let play_at_us = if captured > 0 { captured + target.load(Ordering::SeqCst) + sound_offset.load(Ordering::SeqCst) } else { 0 };
-                sink(Event::Audio { slot: id, data: frame.data, play_at_us });
+                for (data, at) in sound.take(frame.frame, &frame.data, play_at_us) {
+                    sink(Event::Audio { slot: id, data, play_at_us: at });
+                }
                 continue;
             }
             if spoiled.swap(false, Ordering::SeqCst) {
@@ -612,6 +621,46 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
             sink(Event::Frame { slot: id, data: frame.data, show_at_us, captured_us, key: frame.key });
         }
     });
+}
+
+/// Stream 1's frames as PCM for the app: PCM as it comes; Opus decoded, a lost frame rebuilt from the next one's copy
+/// (in-band FEC) or concealed, so the sound has no holes.
+struct Sound {
+    opus: Option<odp::audio::Decoder>,
+    last: Option<u32>,
+}
+
+impl Sound {
+    fn new(opus: bool) -> Sound {
+        Sound { opus: opus.then(|| odp::audio::Decoder::new(2).ok()).flatten(), last: None }
+    }
+
+    /// Frames to play, each with its time (a frame is 10 ms).
+    fn take(&mut self, frame: u32, data: &[u8], at: i64) -> Vec<(Vec<u8>, i64)> {
+        let gap = self.last.map_or(1, |l| frame.wrapping_sub(l));
+        if gap == 0 || gap > u32::MAX / 2 {
+            return Vec::new(); // a repeat or a late frame: already played over
+        }
+        self.last = Some(frame);
+        let Some(dec) = self.opus.as_mut() else { return vec![(data.to_vec(), at)] };
+        let mut out = Vec::new();
+        let missing = (gap - 1).min(5) as i64; // beyond 50 ms the player starts again anyway
+        let shift = |k: i64| if at > 0 { at - k * 10_000 } else { 0 };
+        for k in (2..=missing).rev() {
+            if let Ok(pcm) = dec.conceal() {
+                out.push((odp::audio::to_bytes(&pcm), shift(k)));
+            }
+        }
+        if missing >= 1 {
+            if let Ok(pcm) = dec.recover(data) {
+                out.push((odp::audio::to_bytes(&pcm), shift(1)));
+            }
+        }
+        if let Ok(pcm) = dec.decode(data) {
+            out.push((odp::audio::to_bytes(&pcm), at));
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -717,7 +766,7 @@ mod tests {
             let host = format!("host{n}");
             let me = odp::link::Me { identity: &id, id: &host, name, caps: Caps::default() };
             let mut link = odp::link::host(TcpStream::connect(("127.0.0.1", r.port())).unwrap(), me, None, Some(&pin)).unwrap();
-            link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 640, h: 360, fps: 30, bitrate_kbps: 2000, audio: false, group: None, region: None }).unwrap();
+            link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 640, h: 360, fps: 30, bitrate_kbps: 2000, audio: false, audio_codec: None, group: None, region: None }).unwrap();
             let udp_port = match link.recv().unwrap().unwrap() {
                 Message::SessionOk { udp_port, .. } => udp_port,
                 m => panic!("{m:?}"),
@@ -811,7 +860,7 @@ mod tests {
         let me = odp::link::Me { identity: &host_id, id: "host1", name: "Laptop", caps: Caps::default() };
         let mut link = odp::link::host(stream, me, None, Some(&pin)).unwrap();
         assert_eq!(link.peer_name, "Test TV");
-        link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None, region: None }).unwrap();
+        link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: true, audio_codec: Some("opus".into()), group: None, region: None }).unwrap();
         let udp_port = match link.recv().unwrap().unwrap() {
             Message::SessionOk { udp_port, .. } => udp_port,
             m => panic!("{m:?}"),
@@ -835,19 +884,33 @@ mod tests {
             }
         }
         assert_eq!(frames, vec![(0, true), (1, false), (2, false)]);
-        // Sound on its own stream comes through as audio.
+        // Sound on its own stream, as Opus (the session asked for it), comes through as PCM: six frames sent with the
+        // fourth lost on the way, six frames heard (the lost one rebuilt from the fifth's copy).
         let mut sound = odp::media::Packetizer::new(odp::media::Kind::Audio, 1);
-        for d in sound.frame(&[1u8; 1920], now_us(), false, &mut sealer) {
-            udp.send_to(&d, ("127.0.0.1", udp_port)).unwrap();
-        }
-        let until = Instant::now() + Duration::from_secs(5);
-        let mut heard = false;
-        while !heard && Instant::now() < until {
-            if let Ok(Event::Audio { data, .. }) = rx.recv_timeout(Duration::from_millis(500)) {
-                heard = data.len() == 1920;
+        let mut enc = odp::audio::Encoder::new(2, 96_000).unwrap();
+        for f in 0..6 {
+            let pcm: Vec<i16> = (0..odp::audio::FRAME).flat_map(|i| {
+                let v = (((f * odp::audio::FRAME + i) as f32 * 0.0576).sin() * 9000.0) as i16;
+                [v, v]
+            }).collect();
+            let packet = enc.encode(&pcm).unwrap();
+            let datagrams = sound.frame(&packet, now_us(), false, &mut sealer);
+            if f == 3 {
+                continue;
+            }
+            for d in datagrams {
+                udp.send_to(&d, ("127.0.0.1", udp_port)).unwrap();
             }
         }
-        assert!(heard, "no audio event");
+        let until = Instant::now() + Duration::from_secs(5);
+        let mut heard = 0;
+        while heard < 6 && Instant::now() < until {
+            if let Ok(Event::Audio { data, .. }) = rx.recv_timeout(Duration::from_millis(500)) {
+                assert_eq!(data.len(), 1920);
+                heard += 1;
+            }
+        }
+        assert_eq!(heard, 6, "frames heard");
         // A key from the screen's remote reaches the host.
         r.key(0x28, true, 0);
         let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));

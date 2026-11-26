@@ -33,6 +33,9 @@ pub struct Caps {
     /// Audio channels it plays (0: no sound).
     #[serde(default)]
     pub audio_channels: u8,
+    /// Sound formats it takes besides PCM ("opus"); empty: PCM only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_codecs: Vec<String>,
     #[serde(default)]
     pub keyboard: bool,
     #[serde(default)]
@@ -106,6 +109,9 @@ pub enum Message {
         fps: u32,
         bitrate_kbps: u32,
         audio: bool,
+        /// The sound's format on stream 1: "opus", or "pcm" (absent: pcm).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio_codec: Option<String>,
         group: Option<String>,
         /// A wall: the part of the picture this receiver shows, enlarged to fill its screen (absent: all of it).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -196,13 +202,13 @@ mod tests {
 
     #[test]
     fn messages_name_their_type_and_round_trip() {
-        let m = Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1920, h: 1080, fps: 60, bitrate_kbps: 20_000, audio: true, group: None, region: None };
+        let m = Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1920, h: 1080, fps: 60, bitrate_kbps: 20_000, audio: true, audio_codec: Some("opus".into()), group: None, region: None };
         let json = String::from_utf8(m.to_json()).unwrap();
         assert!(json.starts_with(r#"{"t":"session.start","id":1,"mode":"mirror""#), "{json}");
         assert!(!json.contains("region"), "{json}");
         assert_eq!(Message::from_json(json.as_bytes()).unwrap(), m);
         // A wall's screen: the top-right quarter.
-        let wall = Message::SessionStart { id: 2, mode: Mode::Mirror, codec: "h264".into(), w: 0, h: 0, fps: 30, bitrate_kbps: 12_000, audio: false, group: Some("lobby".into()), region: Some(Region { x: 32768, y: 0, w: 32767, h: 32768 }) };
+        let wall = Message::SessionStart { id: 2, mode: Mode::Mirror, codec: "h264".into(), w: 0, h: 0, fps: 30, bitrate_kbps: 12_000, audio: false, audio_codec: None, group: Some("lobby".into()), region: Some(Region { x: 32768, y: 0, w: 32767, h: 32768 }) };
         assert_eq!(Message::from_json(&wall.to_json()).unwrap(), wall);
     }
 

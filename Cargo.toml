@@ -17,6 +17,7 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+unsafe-libopus = "0.2"
 
 # In a browser (the web profile's receivers: LG and Samsung TVs), randomness comes from crypto.getRandomValues,
 # through a function the WebAssembly module imports (odp-web registers it; no generated JavaScript glue).

@@ -143,7 +143,7 @@ pub fn run(cfg: &Config) -> Report {
     let _ = link.stream().set_read_timeout(Some(Duration::from_millis(5)));
 
     // A session.
-    if let Err(e) = link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None, region: None }) {
+    if let Err(e) = link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, audio_codec: None, group: None, region: None }) {
         r.add(Level::Basic, "answers session.start", Outcome::Fail(e));
         return r;
     }
@@ -356,7 +356,7 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     let id = format!("odp-check-{}", &identity.fingerprint()[..4]);
     let me = Me { identity: &identity, id: &id, name, caps: Caps::default() };
     let mut link = host(TcpStream::connect(&cfg.address).map_err(|e| e.to_string())?, me, None, Some(&cfg.pin))?;
-    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None, region: None })?;
+    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, audio_codec: None, group: None, region: None })?;
     let udp_port = wait_for(&mut link, Duration::from_secs(5), |m| match m {
         Message::SessionOk { udp_port, .. } => Some(*udp_port),
         _ => None,
