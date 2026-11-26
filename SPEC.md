@@ -74,7 +74,7 @@ is the set of receivers in one synced presentation.
 ### L3 Session
 - `hello {versions, id, name, role, caps}`. Receiver caps: `decode` (list of `{codec, profile, level, max_w, max_h,
   max_fps, hw}`), `display` (`w, h, refresh_rates, hdr, edid_latency{video_ms, audio_ms}`), `audio` (channels, rates),
-  `input` (`keyboard, pointer, touch{max_contacts}`), `cinema` (`{drm: [widevine|playready|fairplay], level}` or
+  `input` (`keyboard, pointer, touch{max_contacts}, pen`), `cinema` (`{drm: [widevine|playready|fairplay], level}` or
   absent), `profile` (`rt` | `web`).
 - `session.start {mode: mirror|extend|cinema, video{codec, w, h, fps, bitrate}, audio{codec, rate, channels},
   udp_port, group, region?}` → `session.ok {udp_port}`. `region {x, y, w, h}` (each 0..65535 of the picture's width or
@@ -83,6 +83,10 @@ is the set of receivers in one synced presentation.
 - `device.rename {name}`: a paired host names a device nobody sits at (a kiosk, a TV box); a device with its own
   owner answers `error` and keeps its name.
 - `session.layout {screen_id, w_mm, h_mm}` lets the host place the receiver in its screen layout.
+- Several hosts at once: a receiver may hold a link and session with more than one host. It shows their pictures side
+  by side (a split screen), plays the sound of the one it focuses, and sends its keyboard, pointer, touch and pen to
+  that one; each host sees an ordinary session. A host may also send each screen of a wall its own part, cropped
+  before encoding, with no `region`.
 
 ### L4 Media
 - UDP datagrams ≤ 1200 bytes (fits common MTUs, IPv4 and IPv6). Header: `version(1) kind(1) stream(1) flags(1)
@@ -171,13 +175,14 @@ is the set of receivers in one synced presentation.
   - Discovery: the TV apps advertise `_odp-receiver._tcp`, under a name of their own for each start (Android keeps an
     old registration for a while); Omninput hosts browse for it and follow a paired receiver to a new address by
     its fingerprint (`fp` in the TXT record).
-- Not yet: `cal.chirp` in receivers (hosts tune instead, above), `sync.output` from receivers (re-tuning when a
-  screen's sound output changes), FEC, touch. The web profile is a protocol option; Omninput itself doesn't ship a
+- Also running: `sync.output` from the TV apps (the host tunes again when a screen's sound moves to a soundbar,
+  Bluetooth or AirPlay); several hosts at once in every receiver (split screens); meeting rooms (a receiver that
+  keeps a PIN open and forgets each host when it leaves); touch from Windows screens, kiosk touch screens and the
+  tablet and phone apps, and pen (kind 3) from Windows screens, kiosk pen tablets, Android styluses and Apple Pencil.
+- Not yet: `cal.chirp` in receivers (hosts tune instead, above), FEC. The web profile is a protocol option; Omninput itself doesn't ship a
   browser receiver. NACK: the reference receiver asks for lost packets (`media.nack`, gaps of up to 64 in the
   sequence) and `odp-check` checks it.
 
 ## Open questions before 1.0
 - Opus for sound beyond the `rt` profile (Wi-Fi with loss, the web profile): in 1.0, or PCM only until 1.1.
 - Whether multichannel audio and HDR metadata belong in 1.0 or 1.1.
-- Split screens (several hosts on one receiver): several sessions at once. (Walls: `session.start.region`, above; a
-  host may also send each wall screen its own part, cropped before encoding, with no `region`.)
