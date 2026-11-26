@@ -124,6 +124,12 @@ pub extern "system" fn Java_app_omninput_screen_Odp_pen(_: JNIEnv, _: JClass, ha
     }
 }
 
+/// Whether the focused host takes game controllers as controllers (send them with `pad`, else as keys).
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_controllersTaken(_: JNIEnv, _: JClass, handle: jlong) -> jboolean {
+    receiver(handle).is_some_and(|r| r.controllers_taken()) as jboolean
+}
+
 /// A game controller's whole state (ODP 1.1): which (0..3), buttons (odp::input::pad bits), triggers 0..255, sticks
 /// -32768..32767 with up positive.
 #[no_mangle]

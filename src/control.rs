@@ -149,6 +149,10 @@ pub enum Message {
     CalResult { receiver: String, arrival_us: i64, level_db: f32 },
     #[serde(rename = "input.key")]
     Key { usage: u16, down: bool, modifiers: u8 },
+    /// ODP 1.1, host to receiver, only to receivers whose `caps.controllers` isn't 0: whether this host takes their game
+    /// controllers as controllers (`on`), so the receiver sends them as such and not as keys.
+    #[serde(rename = "input.controllers")]
+    Controllers { on: bool },
     #[serde(rename = "cinema.open")]
     CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, state: PlayState, at_us: i64 },
     #[serde(rename = "cinema.control")]

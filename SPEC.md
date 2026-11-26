@@ -143,7 +143,10 @@ is the set of receivers in one synced presentation.
   left stick 256, right stick 512, up 1024, down 2048, left 4096, right 8192, guide 16384; A is the bottom face
   button), triggers 0..255, sticks -32768..32767 with up positive. The whole state goes on each change and every
   100 ms while it isn't at rest; at rest three times. A receiver says how many it sends with `caps.controllers`. The
-  host shows them to its programs as game controllers of its own (Omninput: a virtual controller per pad).
+  host shows them to its programs as game controllers of its own (Omninput: a virtual controller per pad). A host
+  that does says so after `session.ok` with `input.controllers {on: true}` (and `false` when it stops), sent only to
+  receivers with `caps.controllers` above 0 (a 1.0 receiver would take an unknown message as an error); until then a
+  receiver sends its controller as keys (a remote), so the same button never arrives twice.
 - The host maps these onto its own input pipeline (Omninput: the existing injectors; touch becomes pointer input where
   the OS has no touch injection).
 
@@ -197,7 +200,8 @@ is the set of receivers in one synced presentation.
   sequence) and `odp-check` checks it.
 
 ## 1.1 (2026-11-27)
-- Game controllers (L6, kind 4, `caps.controllers`). `hello` lists `odp/1.1` first; a 1.0 side ignores kind 4.
+- Game controllers (L6, kind 4, `caps.controllers`, `input.controllers`). `hello` lists `odp/1.1` first; a 1.0
+  side ignores kind 4.
 
 ## Settled for 1.0, and later
 - Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.

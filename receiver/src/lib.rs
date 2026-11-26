@@ -100,6 +100,8 @@ struct Slot {
     sound_offset: Arc<AtomicI64>,
     /// The decoder failed: wait for a key frame.
     spoiled: Arc<AtomicBool>,
+    /// The host takes game controllers as controllers (input.controllers, ODP 1.1).
+    controllers: Arc<AtomicBool>,
 }
 
 /// The session's media side, for input and the clock.
@@ -309,6 +311,12 @@ impl Receiver {
         self.input(&odp::input::Event::Pen { x, y, pressure, flags });
     }
 
+    /// Whether the focused slot's host takes game controllers as controllers (it said `input.controllers`): then the
+    /// app sends its controller with `pad`, otherwise as keys (a remote), never both.
+    pub fn controllers_taken(&self) -> bool {
+        self.slot(self.focused()).is_some_and(|s| s.controllers.load(Ordering::SeqCst))
+    }
+
     /// A game controller's whole state (ODP 1.1, input kind 4), to the focused slot's host: sent when it changes;
     /// while it isn't at rest it goes again every 100 ms, and at rest three times, so a lost datagram is repaired.
     /// Call it with each new state (polling or events, either).
@@ -478,6 +486,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         target: Arc::new(AtomicI64::new(0)),
         sound_offset: Arc::new(AtomicI64::new(0)),
         spoiled: Arc::new(AtomicBool::new(false)),
+        controllers: Arc::new(AtomicBool::new(false)),
     });
     inner.slots.lock().unwrap().push(slot.clone());
     // Keys go to a linked host before it shows anything too (none other is focused).
@@ -510,6 +519,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         let _ = link.stream().set_read_timeout(Some(Duration::from_secs(30)));
         match link.recv() {
             Ok(None) | Ok(Some(Message::Bye)) => break,
+            Ok(Some(Message::Controllers { on })) => slot.controllers.store(on, Ordering::SeqCst),
             Ok(Some(Message::SessionStart { id, codec, w, h, region, audio_codec, .. })) => {
                 let opus = audio_codec.as_deref() == Some(odp::audio::OPUS);
                 if let Some(s) = stop_media.take() {
@@ -986,6 +996,13 @@ mod tests {
         }
         // A game controller (ODP 1.1): its state reaches the host, again every 100 ms while held; at rest it goes
         // four times (once, then three more) and stops.
+        assert!(!r.controllers_taken(), "keys until the host says it takes controllers");
+        link.send(&Message::Controllers { on: true }).unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while !r.controllers_taken() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(r.controllers_taken());
         let (_, mut opener) = link.session.channel_keys(Channel::Input).open(Channel::Input);
         let _ = udp.set_read_timeout(Some(Duration::from_millis(400)));
         let held = odp::input::Pad { index: 0, buttons: odp::input::pad::A, lx: 20000, ..Default::default() };

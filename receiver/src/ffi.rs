@@ -149,6 +149,15 @@ pub unsafe extern "C" fn odp_receiver_pen(r: *const Receiver, x: u16, y: u16, pr
     }
 }
 
+/// Whether the focused host takes game controllers as controllers (send them with `odp_receiver_pad`, else as keys).
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_controllers_taken(r: *const Receiver) -> bool {
+    r.as_ref().is_some_and(|r| r.controllers_taken())
+}
+
 /// A game controller's whole state (ODP 1.1): which (0..3), buttons (odp::input::pad bits), triggers 0..255,
 /// sticks -32768..32767 with up positive. Call it with each new state; the library resends as the protocol asks.
 ///
