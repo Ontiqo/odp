@@ -55,6 +55,16 @@ pub extern "system" fn Java_app_omninput_screen_Odp_pairing(_: JNIEnv, _: JClass
     }
 }
 
+/// The sound output changed (`Receiver::output`).
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_output(mut env: JNIEnv, _: JClass, handle: jlong, device: JString, kind: JString, reported_us: jlong) {
+    let device: String = env.get_string(&device).map(Into::into).unwrap_or_default();
+    let kind: String = env.get_string(&kind).map(Into::into).unwrap_or_default();
+    if let Some(r) = receiver(handle) {
+        r.output(&device, &kind, reported_us);
+    }
+}
+
 /// A meeting room's screen, or not (`Receiver::set_room`).
 #[no_mangle]
 pub extern "system" fn Java_app_omninput_screen_Odp_room(_: JNIEnv, _: JClass, handle: jlong, on: jboolean) {

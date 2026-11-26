@@ -247,6 +247,12 @@ impl Receiver {
     }
 
     /// This screen's delay from a frame's capture time to its picture, in microseconds (sync.latency).
+    /// This screen's sound output changed (`device`: its name; `kind`: hdmi, speaker, bluetooth, airplay, usb,
+    /// headphones; `reported_us`: the latency the system states for it): the host times it again.
+    pub fn output(&self, device: &str, kind: &str, reported_us: i64) {
+        self.send(Message::SyncOutput { device: device.into(), kind: kind.into(), reported_us });
+    }
+
     pub fn latency(&self, video_us: i64) {
         self.send(Message::SyncLatency { video_us, audio_us: 0, source: "measured".into() });
     }

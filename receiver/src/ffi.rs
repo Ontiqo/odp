@@ -84,6 +84,18 @@ pub unsafe extern "C" fn odp_receiver_pairing(r: *const Receiver, open: bool) {
     }
 }
 
+/// The sound output changed (`Receiver::output`).
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`; `device` and `kind` are UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_output(r: *const Receiver, device: *const std::os::raw::c_char, kind: *const std::os::raw::c_char, reported_us: i64) {
+    let text = |p: *const std::os::raw::c_char| if p.is_null() { String::new() } else { std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned() };
+    if let Some(r) = r.as_ref() {
+        r.output(&text(device), &text(kind), reported_us);
+    }
+}
+
 /// A meeting room's screen, or not (`Receiver::set_room`).
 ///
 /// # Safety
