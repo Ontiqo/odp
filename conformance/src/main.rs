@@ -6,11 +6,20 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
     let (Some(address), Some(pin)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: odp-check <address:port> <pin> [--key SECONDS] [--seconds N]");
+        eprintln!("usage: odp-check <address:port> <pin> [--key SECONDS] [--seconds N] | --show SECONDS [--name NAME] | --cinema URL");
         std::process::exit(2);
     };
     let pin: String = pin.chars().filter(char::is_ascii_digit).collect();
     let cfg = odp_check::Config { address: address.clone(), pin, key_wait: Duration::from_secs(flag("--key").unwrap_or(0)), seconds: flag("--seconds").unwrap_or(10) };
+    // --show SECONDS [--name NAME]: the test video on the receiver for that long instead of the checks.
+    if let Some(seconds) = flag("--show") {
+        let name = args.iter().position(|a| a == "--name").and_then(|i| args.get(i + 1)).map_or("ODP test host", String::as_str);
+        if let Err(e) = odp_check::show(&cfg, name, seconds) {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
     // --cinema URL: follow a real title on the receiver instead of the checks.
     if let Some(url) = args.iter().position(|a| a == "--cinema").and_then(|i| args.get(i + 1)) {
         match odp_check::cinema_follow(&cfg, url) {

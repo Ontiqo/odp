@@ -348,6 +348,51 @@ pub fn cinema_follow(cfg: &Config, url: &str) -> Result<Vec<(f64, i64, bool, Opt
     Ok(out)
 }
 
+/// Shows the test video on a receiver for `seconds` (a demonstration, or several hosts at once to try a split
+/// screen): pairs with the PIN, starts a session and sends the colour bars in a loop, from a key frame whenever the
+/// receiver asks. `name` is the host's name on the receiver.
+pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
+    let identity = Identity::generate();
+    let id = format!("odp-check-{}", &identity.fingerprint()[..4]);
+    let me = Me { identity: &identity, id: &id, name, caps: Caps::default() };
+    let mut link = host(TcpStream::connect(&cfg.address).map_err(|e| e.to_string())?, me, None, Some(&cfg.pin))?;
+    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, group: None, region: None })?;
+    let udp_port = wait_for(&mut link, Duration::from_secs(5), |m| match m {
+        Message::SessionOk { udp_port, .. } => Some(*udp_port),
+        _ => None,
+    })
+    .ok_or("no session.ok")?;
+    let target = std::net::SocketAddr::new(link.stream().peer_addr().map_err(|e| e.to_string())?.ip(), udp_port);
+    let local: std::net::IpAddr = if target.ip().is_loopback() { [127, 0, 0, 1].into() } else { [0, 0, 0, 0].into() };
+    let socket = UdpSocket::bind((local, 0)).map_err(|e| e.to_string())?;
+    let (mut sealer, _) = link.session.channel_keys(Channel::Media).open(Channel::Media);
+    let mut packets = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
+    let video = frames();
+    let started = Instant::now();
+    let mut next = 0usize;
+    let mut probe = [0u8; 1];
+    while started.elapsed() < Duration::from_secs(seconds) {
+        let (key, data) = &video[next % video.len()];
+        for d in packets.frame(data, now_us(), *key, &mut sealer) {
+            let _ = socket.send_to(&d, target);
+        }
+        next += 1;
+        // A key frame asked for: the loop starts again from its first frame (a key frame).
+        let _ = link.stream().set_read_timeout(Some(Duration::from_millis(33)));
+        if matches!(link.stream().peek(&mut probe), Ok(n) if n > 0) {
+            let _ = link.stream().set_read_timeout(Some(Duration::from_secs(5)));
+            match link.recv() {
+                Ok(Some(Message::Keyframe)) => next = 0,
+                Ok(None) | Ok(Some(Message::Bye)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    }
+    let _ = link.send(&Message::SessionStop);
+    let _ = link.send(&Message::Bye);
+    Ok(())
+}
+
 /// The first message `want` accepts within `time` (others are passed over).
 fn wait_for<T>(link: &mut Link<TcpStream>, time: Duration, want: impl Fn(&Message) -> Option<T>) -> Option<T> {
     let until = Instant::now() + time;
