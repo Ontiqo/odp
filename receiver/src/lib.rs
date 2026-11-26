@@ -136,7 +136,7 @@ pub struct Receiver {
 impl Receiver {
     pub fn start(cfg: Config, sink: impl Fn(Event) + Send + Sync + 'static) -> Result<Receiver, String> {
         // (A sandboxed Mac app's folder can say it exists without letting itself be looked at as a folder: fine.)
-        std::fs::create_dir_all(&cfg.dir).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) }).map_err(|e| format!("can't keep this screen's files in {}: {e}", cfg.dir.display()))?;
+        std::fs::create_dir_all(&cfg.dir).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists && !cfg.dir.is_file() { Ok(()) } else { Err(e) }).map_err(|e| format!("can't keep this screen's files in {}: {e}", cfg.dir.display()))?;
         let key_path = cfg.dir.join("identity.key");
         let identity = match std::fs::read(&key_path).ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()) {
             Some(secret) => Identity::from_secret(&secret),
@@ -242,6 +242,14 @@ impl Receiver {
     /// Which slot the keyboard, remote and pointer control (a split screen: the tile the viewer chose).
     pub fn focus(&self, slot: u32) {
         self.inner.focus.store(slot, Ordering::SeqCst);
+    }
+
+    /// Ends a host's link (`slot`): a meeting room's screen sends a presenter away. Its picture stops (`stopped`) and,
+    /// in a meeting room, it is forgotten as when it leaves by itself.
+    pub fn end(&self, slot: u32) {
+        if let Some(s) = self.slot(slot) {
+            let _ = s.out.send(Message::Bye);
+        }
     }
 
     /// The focused slot (0: none showing).
@@ -397,10 +405,16 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     let mut showed = false;
     let local = |offset: &Arc<Mutex<Option<i64>>>, host_us: i64| host_us - offset.lock().unwrap().unwrap_or(0);
     loop {
+        // Messages for the host; a Bye (`end`) ends the link once sent.
+        let mut ending = false;
         while let Ok(m) = rx.try_recv() {
-            if link.send(&m).is_err() {
+            ending |= m == Message::Bye;
+            if link.send(&m).is_err() || ending {
                 break;
             }
+        }
+        if ending {
+            break;
         }
         // A short wait, so keys and key frame requests reach the host without delay.
         let _ = link.stream().set_read_timeout(Some(Duration::from_millis(15)));
@@ -706,6 +720,23 @@ mod tests {
         assert_eq!(gone, started[0]);
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(r.focused(), started[1]);
+        // The room's screen sends the other one away: its host hears Bye, and its slot stops.
+        r.end(started[1]);
+        let _ = links[0].stream().set_read_timeout(Some(Duration::from_secs(5)));
+        let mut said_bye = false;
+        while let Ok(Some(m)) = links[0].recv() {
+            if m == Message::Bye {
+                said_bye = true;
+                break;
+            }
+        }
+        assert!(said_bye, "the host wasn't told");
+        let gone = loop {
+            if let Event::Stopped { slot, .. } = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break slot;
+            }
+        };
+        assert_eq!(gone, started[1]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

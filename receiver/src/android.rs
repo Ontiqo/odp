@@ -122,6 +122,14 @@ pub extern "system" fn Java_app_omninput_screen_Odp_decoderFailed(_: JNIEnv, _: 
     }
 }
 
+/// Ends a host's link (`Receiver::end`).
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_end(_: JNIEnv, _: JClass, handle: jlong, slot: jint) {
+    if let Some(r) = receiver(handle) {
+        r.end(slot as u32);
+    }
+}
+
 /// Which slot keys and the pointer go to (`Receiver::focus`).
 #[no_mangle]
 pub extern "system" fn Java_app_omninput_screen_Odp_focus(_: JNIEnv, _: JClass, handle: jlong, slot: jint) {

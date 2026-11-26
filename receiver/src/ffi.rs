@@ -165,6 +165,17 @@ pub unsafe extern "C" fn odp_receiver_decoder_failed(r: *const Receiver, slot: u
     }
 }
 
+/// Ends a host's link (`Receiver::end`).
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_end(r: *const Receiver, slot: u32) {
+    if let Some(r) = r.as_ref() {
+        r.end(slot);
+    }
+}
+
 /// Which slot keys and the pointer go to (`Receiver::focus`).
 ///
 /// # Safety
