@@ -93,7 +93,7 @@ pub struct Me<'a> {
 
 /// The host's side. `known` is the receiver's identity key stored at pairing (None: pair now with `pin`).
 pub fn host<S: Read + Write>(mut stream: S, me: Me<'_>, known: Option<[u8; 32]>, pin: Option<&str>) -> Result<Link<S>, String> {
-    send_plain(&mut stream, &Message::Hello { versions: vec![crate::VERSION.into()], id: me.id.into(), name: me.name.into(), role: "host".into(), caps: Caps::default() })?;
+    send_plain(&mut stream, &Message::Hello { versions: crate::VERSIONS.iter().map(|v| v.to_string()).collect(), id: me.id.into(), name: me.name.into(), role: "host".into(), caps: Caps::default() })?;
     let Message::Hello { id, name, caps, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
     let expected = match known {
         Some(k) => k,
@@ -126,7 +126,7 @@ pub struct ReceiverPolicy<'a> {
 /// The receiver's side.
 pub fn receiver<S: Read + Write>(mut stream: S, me: Me<'_>, policy: ReceiverPolicy<'_>) -> Result<Link<S>, String> {
     let Message::Hello { id, name, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
-    send_plain(&mut stream, &Message::Hello { versions: vec![crate::VERSION.into()], id: me.id.into(), name: me.name.into(), role: "receiver".into(), caps: me.caps })?;
+    send_plain(&mut stream, &Message::Hello { versions: crate::VERSIONS.iter().map(|v| v.to_string()).collect(), id: me.id.into(), name: me.name.into(), role: "receiver".into(), caps: me.caps })?;
     // The host either starts pairing or, when it knows this receiver, offers a session. A host this receiver knows
     // may pair again (it lost its keys) while a PIN is on screen: the new key replaces the stored one.
     let (expected, offer) = match recv_plain(&mut stream)? {

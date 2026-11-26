@@ -1,6 +1,7 @@
-# Open Display Protocol (ODP): version 0.1 draft
+# Open Display Protocol (ODP): version 1.0
 
-Status: **draft**, not frozen (2026-11-26). The reference implementation is this repository's `odp` crate.
+Status: **frozen** (2026-11-27): 1.0 changes only by errata; new features come as 1.x minor versions (optional
+messages and fields). The reference implementation is this repository's `odp` crate.
 This text is licensed under CC BY 4.0; the code in this repository under Apache-2.0.
 
 Goals: a receiver can be written on any platform from this document alone. It must not depend on Omninput's private
@@ -16,6 +17,10 @@ is the set of receivers in one synced presentation.
   common one. A minor version only adds optional messages and fields; unknown fields and message types are ignored.
   A major version may break; hosts keep the previous major for at least a year.
 - Capabilities, not versions, decide features (`caps` in L3): codecs, profiles, touch, audio, cinema, latency info.
+- 1.0 is the 0.1 draft frozen: the same messages and packets. Both sides send `["odp/1.0", "odp/0.1"]` so that
+  implementations of the draft keep working. The key-derivation labels below (`odp/0.1 pair`, `odp/0.1 session`,
+  `odp/0.1 <direction> <channel>`) are fixed strings in every version, not the version spoken. The discovery TXT record
+  says `v=1.0` (receivers that say `v=0.1` are treated the same).
 
 ## Layers
 
@@ -185,7 +190,7 @@ is the set of receivers in one synced presentation.
   browser receiver. NACK: the reference receiver asks for lost packets (`media.nack`, gaps of up to 64 in the
   sequence) and `odp-check` checks it.
 
-## Open questions before 1.0
-- Opus: settled for 1.0 (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that
-  don't list it.
-- Whether multichannel audio and HDR metadata belong in 1.0 or 1.1.
+## Settled for 1.0, and 1.1
+- Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.
+- Multichannel audio and HDR metadata (2026-11-27): 1.1. They are optional additions (a channel layout in
+  `caps.audio`, colour metadata in `session.start`), which is what a minor version is for; 1.0 is stereo and SDR.

@@ -23,4 +23,8 @@ pub mod pair;
 pub mod session;
 
 /// The protocol version this crate speaks.
-pub const VERSION: &str = "odp/0.1";
+pub const VERSION: &str = "odp/1.0";
+
+/// The versions sent in `hello`, newest first: 1.0 is 0.1 frozen, the same on the wire, so both are listed for
+/// receivers and hosts that still say 0.1. (The key-derivation labels keep their literal "odp/0.1" text.)
+pub const VERSIONS: [&str; 2] = [VERSION, "odp/0.1"];

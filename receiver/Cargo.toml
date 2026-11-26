@@ -1,6 +1,6 @@
 [package]
 name = "odp-receiver"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "The reference ODP receiver: pairing, sessions, the shared clock, frames to decode and input back, for any screen"
