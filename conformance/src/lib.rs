@@ -352,6 +352,35 @@ pub fn cinema_follow(cfg: &Config, url: &str) -> Result<Vec<(f64, i64, bool, Opt
 /// screen): pairs with the PIN, starts a session and sends the colour bars in a loop, from a key frame whenever the
 /// receiver asks. `name` is the host's name on the receiver.
 pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
+    show_video(cfg, name, seconds, None)
+}
+
+/// Frames from a file (each: a key flag byte, a big-endian u32 length, the access unit), and their codec.
+pub struct Video {
+    pub codec: String,
+    pub frames: Vec<(bool, Vec<u8>)>,
+}
+
+impl Video {
+    pub fn read(path: &str, codec: &str) -> Result<Video, String> {
+        let b = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let mut frames = Vec::new();
+        let mut i = 0;
+        while i + 5 <= b.len() {
+            let n = u32::from_be_bytes(b[i + 1..i + 5].try_into().unwrap()) as usize;
+            let end = (i + 5 + n).min(b.len());
+            frames.push((b[i] != 0, b[i + 5..end].to_vec()));
+            i = end;
+        }
+        if frames.is_empty() {
+            return Err(format!("{path}: no frames"));
+        }
+        Ok(Video { codec: codec.to_string(), frames })
+    }
+}
+
+/// `show`, with the test video or `video` (another codec, from a file) in a loop.
+pub fn show_video(cfg: &Config, name: &str, seconds: u64, video: Option<Video>) -> Result<(), String> {
     let identity = Identity::generate();
     let id = format!("odp-check-{}", &identity.fingerprint()[..4]);
     let me = Me { identity: &identity, id: &id, name, caps: Caps::default() };
@@ -363,7 +392,12 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     if let Some(c) = &audio_codec {
         println!("sound: {c}");
     }
-    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio, audio_codec, group: None, region: None })?;
+    let codec = video.as_ref().map_or("h264".to_string(), |v| v.codec.clone());
+    if video.is_some() {
+        let can = link.peer_caps.decode.iter().find(|d| d.codec == codec);
+        println!("video: {codec} (the receiver lists it: {})", can.map_or("no".to_string(), |d| format!("yes, hw {}", d.hw)));
+    }
+    link.send(&Message::SessionStart { id: 1, mode: Mode::Mirror, codec, w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio, audio_codec, group: None, region: None })?;
     let udp_port = wait_for(&mut link, Duration::from_secs(5), |m| match m {
         Message::SessionOk { udp_port, .. } => Some(*udp_port),
         _ => None,
@@ -380,7 +414,7 @@ pub fn show(cfg: &Config, name: &str, seconds: u64) -> Result<(), String> {
     let mut packets = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
     let mut sound = odp::media::Packetizer::new(odp::media::Kind::Audio, 1);
     let mut encoder = if opus { Some(odp::audio::Encoder::new(2, 128_000)?) } else { None };
-    let video = frames();
+    let video = video.map_or_else(frames, |v| v.frames);
     let started = Instant::now();
     let start_us = now_us();
     let mut sent_sound = 0i64;
