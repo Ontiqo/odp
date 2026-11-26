@@ -65,6 +65,15 @@ pub extern "system" fn Java_app_omninput_screen_Odp_output(mut env: JNIEnv, _: J
     }
 }
 
+/// Names this screen on itself (`Receiver::rename`); empty goes back to the device's own name.
+#[no_mangle]
+pub extern "system" fn Java_app_omninput_screen_Odp_rename(mut env: JNIEnv, _: JClass, handle: jlong, name: JString) {
+    let name: String = env.get_string(&name).map(Into::into).unwrap_or_default();
+    if let Some(r) = receiver(handle) {
+        r.rename(&name);
+    }
+}
+
 /// A meeting room's screen, or not (`Receiver::set_room`).
 #[no_mangle]
 pub extern "system" fn Java_app_omninput_screen_Odp_room(_: JNIEnv, _: JClass, handle: jlong, on: jboolean) {

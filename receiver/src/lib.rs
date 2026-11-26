@@ -196,6 +196,22 @@ impl Receiver {
         self.inner.name.lock().unwrap().clone()
     }
 
+    /// Names this screen on itself (its own settings): kept, and told to the app ([`Event::Renamed`]) so it is
+    /// advertised under the new name. Empty goes back to the name the app started with (the device's own).
+    pub fn rename(&self, name: &str) {
+        let name: String = name.trim().chars().take(64).collect();
+        let file = self.inner.cfg.dir.join("name");
+        let name = if name.is_empty() {
+            let _ = std::fs::remove_file(&file);
+            self.inner.cfg.name.clone()
+        } else {
+            let _ = std::fs::write(&file, &name);
+            name
+        };
+        *self.inner.name.lock().unwrap() = name.clone();
+        (self.inner.sink)(Event::Renamed { name });
+    }
+
     /// Opens pairing (a new PIN, shown for [`PIN_LIFE`]) or closes it.
     pub fn pairing(&self, open: bool) {
         let pin = open.then(odp::pair::new_pin);
@@ -626,6 +642,35 @@ mod tests {
             _ => None,
         });
         assert_eq!(gone, Some(None));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Named on the screen itself: kept across restarts, told to the app, and empty goes back to the device's name.
+    #[test]
+    fn a_screen_renamed_on_itself_keeps_its_name() {
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let dir = std::env::temp_dir().join(format!("odp-receiver-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let r = Receiver::start(Config { dir: dir.clone(), name: "Living Room".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        r.rename("  Boardroom TV  ");
+        assert_eq!(r.name(), "Boardroom TV");
+        let told = rx.iter().find_map(|e| match e {
+            Event::Renamed { name } => Some(name),
+            _ => None,
+        });
+        assert_eq!(told.as_deref(), Some("Boardroom TV"));
+        drop(r);
+        let again = Receiver::start(Config { dir: dir.clone(), name: "Living Room".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, |_| {}).unwrap();
+        assert_eq!(again.name(), "Boardroom TV");
+        again.rename("");
+        assert_eq!(again.name(), "Living Room");
+        assert!(!dir.join("name").exists());
+        drop(again);
         let _ = std::fs::remove_dir_all(dir);
     }
 

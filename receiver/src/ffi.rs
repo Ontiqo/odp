@@ -109,6 +109,17 @@ pub unsafe extern "C" fn odp_receiver_room(r: *const Receiver, on: bool) {
     }
 }
 
+/// Names this screen on itself (`Receiver::rename`); empty goes back to the device's own name.
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`; `name` is a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_rename(r: *const Receiver, name: *const c_char) {
+    if let (Some(r), false) = (r.as_ref(), name.is_null()) {
+        r.rename(&CStr::from_ptr(name).to_string_lossy());
+    }
+}
+
 /// # Safety
 /// `r` comes from `odp_receiver_start`.
 #[no_mangle]
