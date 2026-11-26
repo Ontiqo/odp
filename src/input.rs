@@ -4,13 +4,26 @@
 //! Datagram: `kind(1)` then, for a pointer (1): `x(2) y(2) buttons(1) wheel(2)`; for touch (2): `count(1)` then each
 //! contact `id(1) x(2) y(2) state(1)`. Positions are 0..65535 across the receiver's screen; wheel is in 1/120 notches;
 //! touch state 0 down, 1 move, 2 up. While any contact is down the receiver resends the whole set every 100 ms, so a
-//! lost "up" is repaired.
+//! lost "up" is repaired. For a pen (3): `x(2) y(2) pressure(2) flags(1)`, pressure 0..65535 and flags [`pen`] (in
+//! range, tip down, barrel button, eraser); while the tip is down the receiver resends it every 100 ms too.
 
 /// Pointer buttons (bit flags).
 pub mod buttons {
     pub const LEFT: u8 = 1;
     pub const RIGHT: u8 = 2;
     pub const MIDDLE: u8 = 4;
+}
+
+/// Pen flags (bit flags).
+pub mod pen {
+    /// Over the screen (hovering or touching).
+    pub const IN_RANGE: u8 = 1;
+    /// The tip is on the screen.
+    pub const TIP: u8 = 2;
+    /// The side (barrel) button is held.
+    pub const BARREL: u8 = 4;
+    /// The eraser end is in use.
+    pub const ERASER: u8 = 8;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +45,8 @@ pub struct Contact {
 pub enum Event {
     Pointer { x: u16, y: u16, buttons: u8, wheel: i16 },
     Touch(Vec<Contact>),
+    /// A pen (stylus): where, how hard, and its [`pen`] flags.
+    Pen { x: u16, y: u16, pressure: u16, flags: u8 },
 }
 
 impl Event {
@@ -53,6 +68,14 @@ impl Event {
                     b.extend_from_slice(&c.y.to_be_bytes());
                     b.push(c.state as u8);
                 }
+                b
+            }
+            Event::Pen { x, y, pressure, flags } => {
+                let mut b = vec![3u8];
+                b.extend_from_slice(&x.to_be_bytes());
+                b.extend_from_slice(&y.to_be_bytes());
+                b.extend_from_slice(&pressure.to_be_bytes());
+                b.push(*flags);
                 b
             }
         }
@@ -77,6 +100,7 @@ impl Event {
                 }
                 Some(Event::Touch(contacts))
             }
+            3 if b.len() >= 8 => Some(Event::Pen { x: u16_at(1)?, y: u16_at(3)?, pressure: u16_at(5)?, flags: b[7] }),
             _ => None,
         }
     }
@@ -163,6 +187,10 @@ mod tests {
         assert_eq!(Event::parse(&p.to_bytes()), Some(p));
         let t = Event::Touch(vec![Contact { id: 1, x: 10, y: 20, state: TouchState::Down }, Contact { id: 2, x: 30, y: 40, state: TouchState::Up }]);
         assert_eq!(Event::parse(&t.to_bytes()), Some(t));
+        let pen = Event::Pen { x: 32768, y: 1, pressure: 40000, flags: pen::IN_RANGE | pen::TIP | pen::BARREL };
+        assert_eq!(pen.to_bytes().len(), 8);
+        assert_eq!(Event::parse(&pen.to_bytes()), Some(pen));
+        assert_eq!(Event::parse(&[3, 0, 0, 0]), None);
     }
 
     #[test]

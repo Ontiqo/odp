@@ -127,6 +127,35 @@ pub unsafe extern "C" fn odp_receiver_pointer(r: *const Receiver, x: u16, y: u16
     }
 }
 
+/// A pen: where (0..65535), how hard (0..65535), its flags (1 in range, 2 tip, 4 barrel, 8 eraser).
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_pen(r: *const Receiver, x: u16, y: u16, pressure: u16, flags: u8) {
+    if let Some(r) = r.as_ref() {
+        r.pen(x, y, pressure, flags);
+    }
+}
+
+/// Touch: `count` contacts as `ids`, `xs`, `ys` and `states` (0 down, 1 move, 2 up), each array `count` long.
+///
+/// # Safety
+/// `r` comes from `odp_receiver_start`; the arrays hold `count` items.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_touch(r: *const Receiver, count: usize, ids: *const u8, xs: *const u16, ys: *const u16, states: *const u8) {
+    use odp::input::{Contact, TouchState};
+    let Some(r) = r.as_ref() else { return };
+    if count == 0 || ids.is_null() || xs.is_null() || ys.is_null() || states.is_null() {
+        return;
+    }
+    let (ids, xs, ys, states) = (std::slice::from_raw_parts(ids, count), std::slice::from_raw_parts(xs, count), std::slice::from_raw_parts(ys, count), std::slice::from_raw_parts(states, count));
+    let contacts = (0..count.min(255))
+        .map(|i| Contact { id: ids[i], x: xs[i], y: ys[i], state: match states[i] { 0 => TouchState::Down, 1 => TouchState::Move, _ => TouchState::Up } })
+        .collect();
+    r.touch(contacts);
+}
+
 /// # Safety
 /// `r` comes from `odp_receiver_start`.
 #[no_mangle]

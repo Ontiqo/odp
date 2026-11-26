@@ -40,6 +40,9 @@ pub struct Caps {
     /// Touch contacts it reports at once (0: no touch).
     #[serde(default)]
     pub touch: u8,
+    /// It sends a pen's position, pressure and buttons (input kind 3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pen: bool,
     /// DRM systems its film player has ("widevine", "playready", "fairplay"); empty: no cinema.
     #[serde(default)]
     pub cinema: Vec<String>,

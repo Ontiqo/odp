@@ -127,6 +127,8 @@ is the set of receivers in one synced presentation.
   additional data `odp input`, sent from the receiver's media socket to the address the media comes from.
 - Touch: contacts `{id, x, y, pressure?, state: down|move|up}`, up to `max_contacts`, on UDP; a lost `up` is repaired
   by the receiver resending the full contact set every 100 ms while any contact is down.
+- Pen: `{x, y, pressure, flags: in_range|tip|barrel|eraser}` (datagram kind 3: `x(2) y(2) pressure(2) flags(1)`, pressure
+  0..65535), on UDP, resent every 100 ms while the tip is down. A receiver says it can send one with `caps.pen: true`.
 - The host maps these onto its own input pipeline (Omninput: the existing injectors; touch becomes pointer input where
   the OS has no touch injection).
 

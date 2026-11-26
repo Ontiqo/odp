@@ -255,10 +255,24 @@ impl Receiver {
 
     /// The pointer, 0..65535 across the focused slot's picture.
     pub fn pointer(&self, x: u16, y: u16, buttons: u8, wheel: i16) {
+        self.input(&odp::input::Event::Pointer { x, y, buttons, wheel });
+    }
+
+    /// Touch contacts on the focused slot's picture (the whole set, again every 100 ms while one is down).
+    pub fn touch(&self, contacts: Vec<odp::input::Contact>) {
+        self.input(&odp::input::Event::Touch(contacts));
+    }
+
+    /// A pen on the focused slot's picture: where, how hard (0..65535), its `odp::input::pen` flags.
+    pub fn pen(&self, x: u16, y: u16, pressure: u16, flags: u8) {
+        self.input(&odp::input::Event::Pen { x, y, pressure, flags });
+    }
+
+    fn input(&self, e: &odp::input::Event) {
         let Some(slot) = self.slot(self.focused()) else { return };
         if let Some(m) = slot.media.lock().unwrap().as_mut() {
             if let Some(to) = *m.host.lock().unwrap() {
-                let _ = m.socket.send_to(&odp::input::seal(&odp::input::Event::Pointer { x, y, buttons, wheel }, &mut m.input), to);
+                let _ = m.socket.send_to(&odp::input::seal(e, &mut m.input), to);
             }
         };
     }
