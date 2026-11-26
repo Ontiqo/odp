@@ -135,7 +135,8 @@ pub struct Receiver {
 
 impl Receiver {
     pub fn start(cfg: Config, sink: impl Fn(Event) + Send + Sync + 'static) -> Result<Receiver, String> {
-        std::fs::create_dir_all(&cfg.dir).map_err(|e| format!("can't keep this screen's files in {}: {e}", cfg.dir.display()))?;
+        // (A sandboxed Mac app's folder can say it exists without letting itself be looked at as a folder: fine.)
+        std::fs::create_dir_all(&cfg.dir).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) }).map_err(|e| format!("can't keep this screen's files in {}: {e}", cfg.dir.display()))?;
         let key_path = cfg.dir.join("identity.key");
         let identity = match std::fs::read(&key_path).ok().and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()) {
             Some(secret) => Identity::from_secret(&secret),
