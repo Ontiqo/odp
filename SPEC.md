@@ -158,7 +158,9 @@ is the set of receivers in one synced presentation.
   `session.start {mode: extend, w, h}` gives the receiver a display of its own made for it (a Mac's virtual display,
   Wayland's virtual monitor), with its own encoder. Cinema's `cinema.*` from a browser extension that notices
   protected video.
-- Sound inside ODP: L4 `stream 1`, 16-bit PCM, 48 kHz stereo, 10 ms frames (the `rt` profile on a LAN), each frame's
+- Sound inside ODP: L4 `stream 1`, 48 kHz stereo, 10 ms frames, as 16-bit PCM or, when the receiver lists `opus` in
+  `caps.audio_codecs` and `session.start.audio_codec` says so, Opus (low-delay mode, in-band FEC: a lost frame is rebuilt
+  from the next packet or concealed; frames stamped 2.5 ms early for the decoder's lookahead), each frame's
   `pts_us` the moment it should be heard on the shared clock; receivers play every sample at its time, correcting by
   up to 0.2 % in speed and easing larger steps out over several frames (each frame cross-faded with itself shifted).
   While no sound plays, the group's `sync.target` is 0 (each picture shown as soon as it is decoded).
@@ -184,5 +186,6 @@ is the set of receivers in one synced presentation.
   sequence) and `odp-check` checks it.
 
 ## Open questions before 1.0
-- Opus for sound beyond the `rt` profile (Wi-Fi with loss, the web profile): in 1.0, or PCM only until 1.1.
+- Opus: settled for 1.0 (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that
+  don't list it.
 - Whether multichannel audio and HDR metadata belong in 1.0 or 1.1.
