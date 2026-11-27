@@ -370,5 +370,7 @@ fn relay(ws: Ws, host: TcpStream) {
     let _ = host.shutdown(Shutdown::Both);
 }
 
+#[cfg(any(test, feature = "tv"))]
+pub mod tv;
 #[cfg(test)]
 mod tests;
