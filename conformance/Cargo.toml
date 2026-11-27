@@ -8,6 +8,7 @@ repository = "https://github.com/Ontiqo/odp"
 
 [dependencies]
 odp = { path = ".." }
+odp-out = { path = "../out" }
 
 [dev-dependencies]
 odp-receiver = { path = "../receiver" }

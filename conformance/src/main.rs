@@ -4,10 +4,47 @@
 use std::time::Duration;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |args: &[String], name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<u64>().ok());
+    // --out <pin> [--port P] [--lan]: a screen that connects out (SPEC 1.4) dials this host; the checks then run
+    // against it through the bridge. Listens on 127.0.0.1 unless --lan (every interface: a TV on the network).
+    let _bridge;
+    if args.first().map(String::as_str) == Some("--out") {
+        let pin = args.get(1).cloned().unwrap_or_default();
+        let lan = args.iter().any(|a| a == "--lan");
+        let port = flag(&args, "--port").unwrap_or(odp_out::PORT as u64) as u16;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let bind: std::net::IpAddr = if lan { [0, 0, 0, 0].into() } else { [127, 0, 0, 1].into() };
+        let bridge = match odp_out::Bridge::start(bind, port, "ODP conformance host", move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        }) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("can't listen for screens: {e}");
+                std::process::exit(2);
+            }
+        };
+        eprintln!("Waiting for a screen to connect out to port {} (up to 60 s).", bridge.port());
+        let screen = loop {
+            match rx.recv_timeout(Duration::from_secs(60)) {
+                Ok(odp_out::Event::Screen(s)) => break s,
+                Ok(_) => continue,
+                Err(_) => {
+                    eprintln!("no screen connected");
+                    std::process::exit(1);
+                }
+            }
+        };
+        eprintln!("{} connected out ({})", screen.name, screen.address);
+        args = [vec![screen.address.to_string(), pin], args[2..].to_vec()].concat();
+        _bridge = Some(bridge);
+    } else {
+        _bridge = None;
+    }
+    let flag = |name: &str| flag(&args, name);
     let (Some(address), Some(pin)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: odp-check <address:port> <pin> [--key SECONDS] [--switch SECONDS] [--seconds N] | --show SECONDS [--name NAME] [--video FILE --codec C] | --cinema URL");
+        eprintln!("usage: odp-check <address:port> <pin> | --out <pin> [--lan] [--port P], then [--key SECONDS] [--switch SECONDS] [--seconds N] | --show SECONDS [--name NAME] [--video FILE --codec C] | --cinema URL");
         std::process::exit(2);
     };
     let pin: String = pin.chars().filter(char::is_ascii_digit).collect();
