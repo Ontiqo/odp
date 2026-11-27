@@ -2,7 +2,7 @@
 
 Status: **frozen** (2026-11-27): 1.0 changes only by errata; new features come as 1.x minor versions (optional
 messages and fields). The reference implementation is this repository's `odp` crate.
-This text is licensed under CC BY 4.0; the code in this repository under Apache-2.0.
+This text is licensed under CC BY 4.0; the code in this repository under MPL-2.0.
 
 Goals: a receiver can be written on any platform from this document alone. It must not depend on Omninput's private
 formats (heartbeats on UDP 54321, the 39-byte input packets, `omninput-peer-v1`), which stay as they are for

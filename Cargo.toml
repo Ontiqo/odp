@@ -2,7 +2,7 @@
 name = "odp"
 version = "1.0.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MPL-2.0"
 description = "The Open Display Protocol: pairing, encrypted sessions, clock sync, media and input for screen receivers"
 repository = "https://github.com/Ontiqo/odp"
 readme = "README.md"
