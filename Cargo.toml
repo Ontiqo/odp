@@ -25,4 +25,4 @@ unsafe-libopus = "0.2"
 getrandom = { version = "0.2", features = ["custom"] }
 
 [workspace]
-members = [".", "receiver", "conformance", "web"]
+members = [".", "receiver", "conformance", "web", "out"]

@@ -13,6 +13,8 @@ host from it.
   and pointer back and passes Cinema on. A screen app adds only its decoder and window. Rust apps use it directly;
   others through its C interface (`ffi`), and Android through its Java interface (feature `android`,
   `app.omninput.screen.Odp`).
+- `out/`: `odp-out`, connect-out for hosts (MPL-2.0): screens that can only dial out (LG and VIDAA TV apps) connect to
+  the host over WebSockets and appear to it as ordinary screens on loopback addresses (SPEC.md, "1.4: Connect-out").
 - `conformance/`: `odp-check`, a conformance host (MPL-2.0). Show a PIN on a receiver, then
   `cargo run --release -p odp-check -- <address:port> <pin> [--key 10] [--switch 30]`: it pairs (after trying a wrong
   PIN), comes back as a paired host, casts 30 frames of H.264 colour bars in a loop, loses a frame, replays a packet,

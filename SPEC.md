@@ -228,6 +228,22 @@ is the set of receivers in one synced presentation.
   otherwise `text` says why not in plain words (no licence, the input isn't known, the computer is off), which the
   screen shows. Hosts send it only to receivers whose `hello` lists `odp/1.3`. `hello` lists `odp/1.3` first.
 
+## 1.4 (2026-11-28): Connect-out
+- For screens whose apps can only make outgoing connections (TV web apps on LG webOS and Hisense VIDAA: no listening
+  sockets, no UDP, no mDNS). The host listens for them on a WebSocket port (54334 when free) and announces it as
+  `_odp-host._tcp` (TXT `v=1.4`, `id`, `name`). The screen finds hosts by that announcement where it can browse, by
+  trying its own network's addresses on that port where it can't, or by an address typed on the screen.
+- **Lobby:** the screen keeps `ws://<host>:<port>/odp-out` open and says first `{"t":"screen","id","name","fp","pin"}`
+  (as its announcement would; again after a rename). The host answers `{"t":"host","name"}`. Pings keep it; 30 s of
+  silence ends it. While the lobby is open the host lists the screen as found on the network.
+- **Dial:** when the host wants a control connection (pairing, a cast, watching who shows), it sends `{"t":"dial","n"}`
+  on the lobby and the screen opens `/odp-out/dial/<n>` within 10 s. That WebSocket carries the web profile (L4, "Web
+  profile") for that one connection: first a text `{"udp_port"}` from the host, then binary messages of one channel
+  byte (0: L1 control bytes; 1: one L4 datagram) and the bytes. Each dial is a fresh L1 connection (`hello` first), so
+  a screen runs one receiver per dial, sharing its PIN and paired hosts; L2 is end to end as always.
+- `odp-out` (this repository) is a host's side: each screen that connects out appears to the host as an ordinary screen
+  on a loopback address, so nothing else in a host changes.
+
 ## Settled for 1.0, and later
 - Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.
 - Multichannel audio and HDR metadata (2026-11-27): a later 1.x. They are optional additions (a channel layout in

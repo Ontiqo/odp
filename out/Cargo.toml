@@ -1,0 +1,15 @@
+[package]
+name = "odp-out"
+version = "1.0.0"
+edition = "2021"
+license = "MPL-2.0"
+description = "Connect-out for ODP hosts: screens that can only make outgoing connections (TV web apps) dial the host over WebSockets, and appear to it as ordinary screens on loopback addresses"
+repository = "https://github.com/Ontiqo/odp"
+
+[dependencies]
+tungstenite = "0.24"
+serde_json = "1"
+
+[dev-dependencies]
+odp = { path = ".." }
+odp-web = { path = "../web" }
