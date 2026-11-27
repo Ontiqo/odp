@@ -209,6 +209,15 @@ is the set of receivers in one synced presentation.
   only to watch. Hosts send `room.*` only to receivers with `caps.room` (a 1.0 receiver would take an unknown message
   as an error); receivers send `room.presenters` only to owners who asked.
 
+## 1.2 (2026-11-27)
+- Switching the monitor from the screen (L3): a receiver that sits on one input of a monitor or TV (a games console's
+  screen app) says `caps.inputs`; an owner on the same monitor then sends it `monitor.inputs {list: [{id, name}]}`
+  (the monitor's other inputs: its computers and anything else named there) when the link starts and whenever the list
+  changes, and the receiver may send one owner `monitor.switch {id}`, which switches the monitor to that input (to a
+  computer, its keyboard and mouse go there too). The `id` is the host's own and opaque to the receiver. A host may
+  hold a link that shows nothing for this. Hosts send `monitor.inputs` only to receivers with `caps.inputs`; receivers
+  take it only from owners. `hello` lists `odp/1.2` first.
+
 ## Settled for 1.0, and later
 - Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.
 - Multichannel audio and HDR metadata (2026-11-27): a later 1.x. They are optional additions (a channel layout in

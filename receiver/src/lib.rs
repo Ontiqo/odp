@@ -64,6 +64,8 @@ pub enum Event {
     Stopped { slot: u32, host: String },
     /// A paired host named this screen.
     Renamed { name: String },
+    /// The monitor's other inputs changed (ODP 1.2): read them with `monitor_inputs`.
+    Inputs,
     /// Cinema (L7): play `url` from its service; times are on this computer's clock.
     CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, playing: bool, at_us: i64 },
     CinemaControl { position_ms: i64, rate: f64, playing: bool, at_us: i64 },
@@ -110,6 +112,8 @@ struct Slot {
     showing: AtomicBool,
     /// It asked for the presenters (room.watch).
     watching: AtomicBool,
+    /// The monitor's other inputs, as this owner lists them (monitor.inputs, ODP 1.2).
+    inputs: Mutex<Vec<odp::control::MonitorInput>>,
 }
 
 /// The session's media side, for input and the clock.
@@ -326,6 +330,29 @@ impl Receiver {
 
     /// Whether the focused slot's host takes game controllers as controllers (it said `input.controllers`): then the
     /// app sends its controller with `pad`, otherwise as keys (a remote), never both.
+    /// The other inputs of the monitor this screen is on, as the owners linked here list them (ODP 1.2, when the app
+    /// set `caps.inputs`), each once: (id, name).
+    pub fn monitor_inputs(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for s in self.inner.slots.lock().unwrap().iter() {
+            for i in s.inputs.lock().unwrap().iter() {
+                if !out.iter().any(|(id, _)| *id == i.id) {
+                    out.push((i.id.clone(), i.name.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// Asks one owner that listed it to switch the monitor to input `id` (`monitor.switch`). False: none lists it.
+    pub fn switch_input(&self, id: &str) -> bool {
+        let slots = self.inner.slots.lock().unwrap();
+        match slots.iter().find(|s| s.inputs.lock().unwrap().iter().any(|i| i.id == id)) {
+            Some(s) => s.out.send(Message::MonitorSwitch { id: id.to_string() }).is_ok(),
+            None => false,
+        }
+    }
+
     pub fn controllers_taken(&self) -> bool {
         self.slot(self.focused()).is_some_and(|s| s.controllers.load(Ordering::SeqCst))
     }
@@ -514,6 +541,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         owner: !inner.room_guests.lock().unwrap().contains(&link.peer_id),
         showing: AtomicBool::new(false),
         watching: AtomicBool::new(false),
+        inputs: Mutex::new(Vec::new()),
     });
     inner.slots.lock().unwrap().push(slot.clone());
     // Keys go to a linked host before it shows anything too (none other is focused).
@@ -556,6 +584,13 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                     }
                 } else {
                     let _ = link.send(&Message::Error { id: None, code: "not_owner".into(), text: "Only a computer paired with this screen outside a meeting can see who shows.".into() });
+                }
+            }
+            // An owner on the same monitor listing its other inputs (ODP 1.2); a guest's list is ignored.
+            Ok(Some(Message::MonitorInputs { list })) => {
+                if slot.owner {
+                    *slot.inputs.lock().unwrap() = list;
+                    (inner.sink)(Event::Inputs);
                 }
             }
             // An owner ending a presenter.
@@ -864,6 +899,48 @@ mod tests {
         let e = Receiver::start(Config { dir: file, name: "TV".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, |_| {}).err().unwrap();
         assert!(e.contains("can't keep this screen's files"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An owner on the same monitor lists its other inputs (ODP 1.2); the screen reads them and asks for one.
+    #[test]
+    fn an_owner_lists_the_monitors_inputs_and_takes_a_switch() {
+        let dir = std::env::temp_dir().join(format!("odp-receiver-inputs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel::<Event>();
+        let tx = Mutex::new(tx);
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let caps = Caps { inputs: true, ..Default::default() };
+        let r = Receiver::start(Config { dir: dir.clone(), name: "Xbox".into(), port: 0, caps, kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        r.pairing(true);
+        let pin = loop {
+            if let Event::Pin(Some(p)) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break p;
+            }
+        };
+        let id = Identity::generate();
+        let me = odp::link::Me { identity: &id, id: "pc", name: "Ben's PC", caps: Caps::default() };
+        let mut host = odp::link::host(TcpStream::connect(("127.0.0.1", r.port())).unwrap(), me, None, Some(&pin)).unwrap();
+        assert!(host.peer_caps.inputs, "the screen says it lists inputs");
+        let list = vec![odp::control::MonitorInput { id: "pc".into(), name: "Ben's PC".into() }, odp::control::MonitorInput { id: "input:17".into(), name: "TV box".into() }];
+        host.send(&Message::MonitorInputs { list }).unwrap();
+        assert!(rx.iter().any(|e| e == Event::Inputs));
+        assert_eq!(r.monitor_inputs(), vec![("pc".to_string(), "Ben's PC".to_string()), ("input:17".to_string(), "TV box".to_string())]);
+        assert!(r.switch_input("input:17"));
+        assert!(!r.switch_input("nothing"));
+        let _ = host.stream().set_read_timeout(Some(Duration::from_secs(5)));
+        let asked = loop {
+            match host.recv().unwrap() {
+                Some(Message::MonitorSwitch { id }) => break id,
+                Some(_) => continue,
+                None => panic!("closed"),
+            }
+        };
+        assert_eq!(asked, "input:17");
+        drop(r);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Two hosts show here at once (a split screen): their frames arrive in two slots, and keys go to the focused one.

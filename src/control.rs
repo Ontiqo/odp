@@ -52,9 +52,21 @@ pub struct Caps {
     /// It takes `room.watch` and `room.end` from the computers that own it (ODP 1.1): moderating who shows.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub room: bool,
+    /// It lists the other inputs of the monitor or TV it is on and asks for them (`monitor.*`, ODP 1.2): a games
+    /// console's screen app switching the monitor to a computer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inputs: bool,
     /// DRM systems its film player has ("widevine", "playready", "fairplay"); empty: no cinema.
     #[serde(default)]
     pub cinema: Vec<String>,
+}
+
+/// Another input of the monitor a receiver is on (`monitor.inputs`): what the host calls it (`id`, opaque to the
+/// receiver) and its name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonitorInput {
+    pub id: String,
+    pub name: String,
 }
 
 /// A computer showing on a receiver (`room.presenters`).
@@ -173,6 +185,13 @@ pub enum Message {
     /// ODP 1.1, an owner to the receiver: end that presenter's link (as the screen's own "end" does).
     #[serde(rename = "room.end")]
     RoomEnd { slot: u32 },
+    /// ODP 1.2, an owner to a receiver with `caps.inputs`: the other inputs of the monitor it is on (computers, and
+    /// what else is plugged in), sent when the link starts and whenever they change.
+    #[serde(rename = "monitor.inputs")]
+    MonitorInputs { list: Vec<MonitorInput> },
+    /// ODP 1.2, the receiver to one owner that listed inputs: switch the monitor to that one.
+    #[serde(rename = "monitor.switch")]
+    MonitorSwitch { id: String },
     #[serde(rename = "cinema.open")]
     CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, state: PlayState, at_us: i64 },
     #[serde(rename = "cinema.control")]

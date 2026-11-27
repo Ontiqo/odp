@@ -30,6 +30,8 @@ pub fn event_json(e: &Event) -> serde_json::Value {
         Event::Audio { slot, play_at_us, .. } => json!({"t": "audio", "slot": slot, "play_at_us": play_at_us}),
         Event::Stopped { slot, host } => json!({"t": "stopped", "slot": slot, "host": host}),
         Event::Renamed { name } => json!({"t": "renamed", "name": name}),
+        // The monitor's other inputs changed (ODP 1.2): `odp_receiver_monitor_inputs` has them.
+        Event::Inputs => json!({"t": "inputs"}),
         Event::CinemaOpen { service, url, position_ms, rate, playing, at_us } => {
             json!({"t": "cinema.open", "service": service, "url": url, "position_ms": position_ms, "rate": rate, "playing": playing, "at_us": at_us})
         }
@@ -246,6 +248,30 @@ pub unsafe extern "C" fn odp_receiver_cinema_status(r: *const Receiver, position
 pub unsafe extern "C" fn odp_receiver_forget(r: *const Receiver, id: *const c_char) {
     if let (Some(r), Some(id)) = (r.as_ref(), text(id)) {
         r.forget(&id);
+    }
+}
+
+/// The other inputs of the monitor this screen is on (ODP 1.2), as JSON `[{id, name}]`; free it with
+/// `odp_receiver_free_string`.
+///
+/// # Safety
+/// `r` from `odp_receiver_start`.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_monitor_inputs(r: *const Receiver) -> *mut c_char {
+    let Some(r) = r.as_ref() else { return std::ptr::null_mut() };
+    let list: Vec<serde_json::Value> = r.monitor_inputs().into_iter().map(|(id, name)| serde_json::json!({"id": id, "name": name})).collect();
+    CString::new(serde_json::Value::Array(list).to_string()).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
+/// Asks the monitor to switch to input `id` (one from `odp_receiver_monitor_inputs`). False: no owner lists it.
+///
+/// # Safety
+/// `r` from `odp_receiver_start`; `id` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn odp_receiver_switch_input(r: *const Receiver, id: *const c_char) -> bool {
+    match (r.as_ref(), text(id)) {
+        (Some(r), Some(id)) => r.switch_input(&id),
+        _ => false,
     }
 }
 
