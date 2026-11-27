@@ -37,7 +37,9 @@ is the set of receivers in one synced presentation.
 
 ### L0 Discovery
 - Receivers advertise `_odp-receiver._tcp.local` with TXT records: `v=0.1`, `id=<receiver id>`, `fp=<key fingerprint>`,
-  `name=<display name>`, `paired=0|1`, `role=receiver`.
+  `name=<display name>`, `paired=0|1`, `role=receiver`; optionally (1.3) `pin=remote|touch|click|pad|shown`: how
+  someone at the screen brings up its PIN (OK on a remote, a tap, a click, A on a game controller, or it shows one
+  already), so a host's "type the PIN" step can say the right thing. Absent: the host says it generally.
 - The SRV record gives L1's port. Receivers try 54330, 54331 and 54332 first (easy to type) and take any free port
   when those are taken, so hosts use the advertised port, and a receiver shows its address and port for typing.
 - Hosts may advertise `_odp-host._tcp.local` (used by receivers for wake rules and to show "who can cast here").
