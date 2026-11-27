@@ -379,6 +379,12 @@ impl Receiver {
         out
     }
 
+    /// The name of the owner that lists input `id` (the computer a `switch_input` asks), if one does.
+    pub fn input_owner(&self, id: &str) -> Option<String> {
+        let slots = self.inner.slots.lock().unwrap();
+        slots.iter().find(|s| s.inputs.lock().unwrap().iter().any(|i| i.id == id)).map(|s| s.name.clone())
+    }
+
     /// Asks one owner that listed it to switch the monitor to input `id` (`monitor.switch`). False: none lists it.
     pub fn switch_input(&self, id: &str) -> bool {
         let slots = self.inner.slots.lock().unwrap();
