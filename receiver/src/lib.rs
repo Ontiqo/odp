@@ -28,6 +28,10 @@ pub const PORTS: [u16; 3] = [54330, 54331, 54332];
 /// How long a pairing PIN stays on screen.
 pub const PIN_LIFE: Duration = Duration::from_secs(300);
 
+/// A host showing here that is heard from for this long (no frames, no clock answers: a laptop shut or gone off the
+/// network without closing its link) is taken off the screen, so the screen doesn't keep its last picture for good.
+pub const HOST_SILENT: Duration = Duration::from_secs(20);
+
 pub struct Config {
     /// Where the identity key and the paired hosts are kept.
     pub dir: PathBuf,
@@ -142,6 +146,9 @@ struct Inner {
     pads: Mutex<Pads>,
     /// Hosts that paired while this was a meeting room's screen: guests, never owners.
     room_guests: Mutex<std::collections::HashSet<String>>,
+    /// [`PIN_LIFE`] and [`HOST_SILENT`] (shorter in tests).
+    pin_life: Mutex<Duration>,
+    silent_after: Mutex<Duration>,
 }
 
 /// Each controller's last state and the sends it has left (u8::MAX: until it is at rest), and whether the resending
@@ -207,6 +214,8 @@ impl Receiver {
             room: AtomicBool::new(false),
             pads: Mutex::new(Pads::default()),
             room_guests: Mutex::new(Default::default()),
+            pin_life: Mutex::new(PIN_LIFE),
+            silent_after: Mutex::new(HOST_SILENT),
         });
         (inner.sink)(Event::Listening { port, fingerprint: inner.identity.fingerprint() });
         let me = inner.clone();
@@ -247,11 +256,36 @@ impl Receiver {
         (self.inner.sink)(Event::Renamed { name });
     }
 
-    /// Opens pairing (a new PIN, shown for [`PIN_LIFE`]) or closes it.
+    /// Opens pairing (a new PIN, shown for [`PIN_LIFE`]) or closes it. A PIN that runs out unused goes from the
+    /// screen ([`Event::Pin`] None), so the screen never shows one that no longer pairs (a meeting room's is renewed
+    /// instead).
     pub fn pairing(&self, open: bool) {
         let pin = open.then(odp::pair::new_pin);
         *self.inner.pin.lock().unwrap() = pin.clone().map(|p| (p, Instant::now()));
-        (self.inner.sink)(Event::Pin(pin));
+        (self.inner.sink)(Event::Pin(pin.clone()));
+        if let Some(pin) = pin {
+            let me = self.clone();
+            let life = *self.inner.pin_life.lock().unwrap();
+            std::thread::spawn(move || {
+                std::thread::sleep(life);
+                if me.inner.room.load(Ordering::SeqCst) {
+                    return;
+                }
+                let mut now = me.inner.pin.lock().unwrap();
+                if now.as_ref().is_some_and(|(p, _)| *p == pin) {
+                    *now = None;
+                    drop(now);
+                    (me.inner.sink)(Event::Pin(None));
+                }
+            });
+        }
+    }
+
+    /// Tests: a shorter PIN life and host silence.
+    #[cfg(test)]
+    fn set_lives(&self, pin: Duration, silent: Duration) {
+        *self.inner.pin_life.lock().unwrap() = pin;
+        *self.inner.silent_after.lock().unwrap() = silent;
     }
 
     /// A meeting room's screen, or not: while on, a PIN always shows (a new one when it is used or runs out), and
@@ -264,7 +298,8 @@ impl Receiver {
             std::thread::spawn(move || {
                 while me.inner.room.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_secs(5));
-                    let stale = me.inner.pin.lock().unwrap().as_ref().is_none_or(|(_, t)| t.elapsed() > PIN_LIFE - Duration::from_secs(20));
+                    let life = *me.inner.pin_life.lock().unwrap();
+                    let stale = me.inner.pin.lock().unwrap().as_ref().is_none_or(|(_, t)| t.elapsed() > life.saturating_sub(Duration::from_secs(20)));
                     if stale && me.inner.room.load(Ordering::SeqCst) {
                         me.pairing(true);
                     }
@@ -496,7 +531,8 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     let from = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let hosts = inner.hosts.lock().unwrap().clone();
-    let pin = inner.pin.lock().unwrap().clone().filter(|(_, t)| t.elapsed() < PIN_LIFE).map(|(p, _)| p);
+    let life = *inner.pin_life.lock().unwrap();
+    let pin = inner.pin.lock().unwrap().clone().filter(|(_, t)| t.elapsed() < life).map(|(p, _)| p);
     let paired = |id: &str| hosts.iter().find(|h| h.id == id).map(|h| h.key);
     let paired_before = |id: &str, key: &[u8; 32]| hosts.iter().any(|h| h.id == id && h.key == *key);
     let name = inner.name.lock().unwrap().clone();
@@ -510,7 +546,12 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
     };
     let mut link = match odp::link::receiver(stream, me, odp::link::ReceiverPolicy { paired: &paired, pin, on_paired: Some(&stored) }) {
         Ok(l) => l,
-        Err(e) => return (inner.sink)(Event::Problem(format!("A computer at {from} couldn't connect: {e}"))),
+        Err(e) => {
+            if let Some(text) = connect_problem(&from, &e) {
+                (inner.sink)(Event::Problem(text));
+            }
+            return;
+        }
     };
     {
         // Paired just now (stored when pairing succeeded): the PIN goes.
@@ -660,7 +701,7 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
             Ok(Some(Message::CinemaClose)) => (inner.sink)(Event::CinemaClose),
             Ok(Some(_)) => {}
             Err(e) => {
-                (inner.sink)(Event::Problem(format!("The link with {} ended: {e}", link.peer_name)));
+                (inner.sink)(Event::Problem(format!("The connection to {} was lost ({e}).", link.peer_name)));
                 break;
             }
         }
@@ -687,6 +728,19 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         hosts.retain(|h| h.id != link.peer_id);
         save_hosts(&inner.cfg.dir, &hosts);
     }
+}
+
+/// What a screen may say when a computer couldn't connect, in plain words. None: nothing worth a line on the screen
+/// (a connection closed before it said anything: a computer checking the screen is there, or one that gave up).
+fn connect_problem(from: &str, e: &str) -> Option<String> {
+    let who = if from.is_empty() { "A computer".to_string() } else { format!("A computer at {from}") };
+    Some(match e {
+        "the other side closed the connection" => return None,
+        "not pairing" => format!("{who} tried to pair while no PIN was showing."),
+        "the PIN doesn't match" => format!("{who} typed a PIN that doesn't match. Type the PIN shown here."),
+        "an unpaired host that didn't start pairing" => format!("{who} isn't paired with this screen any more. Add it again with a PIN."),
+        _ => format!("{who} couldn't connect ({e})."),
+    })
 }
 
 /// After a lost frame, only a key frame may go to the decoder; asks the host for one (at most every 250 ms).
@@ -726,8 +780,11 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
     }
     let (sink, offset, target, spoiled) = (inner.sink.clone(), slot.offset.clone(), slot.target.clone(), slot.spoiled.clone());
     let (sound_offset, out, id) = (slot.sound_offset.clone(), slot.out.clone(), slot.id);
+    let (silent_after, name) = (*inner.silent_after.lock().unwrap(), slot.name.clone());
     *offset.lock().unwrap() = None;
     std::thread::spawn(move || {
+        // When the host was last heard from (a frame or a clock answer).
+        let mut heard = Instant::now();
         let (mut pinger, mut opener) = media.open(Channel::Media);
         let mut clock = odp::clock::Clock::default();
         let mut pinged = Instant::now() - Duration::from_secs(2);
@@ -738,6 +795,12 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
         let mut buf = vec![0u8; 2048];
         while !stop.load(Ordering::SeqCst) {
             let known = *host.lock().unwrap();
+            // Gone without a word (shut, asleep, off the network): its picture comes off the screen.
+            if known.is_some() && heard.elapsed() > silent_after {
+                sink(Event::Problem(format!("{name} stopped answering, so its picture was taken off this screen.")));
+                let _ = out.send(Message::Bye);
+                break;
+            }
             if let Some(to) = known.filter(|_| pinged.elapsed() >= Duration::from_secs(1)) {
                 let _ = socket.send_to(&odp::clock::Probe::Ping { t1: now_us() }.seal(&mut pinger), to);
                 pinged = Instant::now();
@@ -745,6 +808,7 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
             let Ok((n, from)) = socket.recv_from(&mut buf) else { continue };
             if buf[..n].starts_with(odp::clock::MAGIC) {
                 if let Some(odp::clock::Probe::Pong { t1, t2, t3 }) = odp::clock::Probe::open(&buf[..n], &mut opener) {
+                    heard = Instant::now();
                     clock.add(odp::clock::Sample { t1, t2, t3, t4: now_us() });
                     *offset.lock().unwrap() = clock.offset();
                 }
@@ -757,6 +821,7 @@ fn start_media(inner: &Arc<Inner>, slot: &Arc<Slot>, socket: UdpSocket, media: C
                 let _ = out.send(Message::Nack { stream: 0, seqs: missing });
             }
             let Some(frame) = done else { continue };
+            heard = Instant::now();
             // Only a packet that opened says where the host is.
             if known != Some(from) {
                 *host.lock().unwrap() = Some(from);
@@ -1239,5 +1304,95 @@ mod tests {
         assert!(dir.join("hosts.json").exists());
         drop(link);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A PIN that runs out goes from the screen (it would no longer pair), unless a newer one replaced it.
+    #[test]
+    fn a_pin_that_runs_out_goes_from_the_screen() {
+        let dir = std::env::temp_dir().join(format!("odp-receiver-pin-life-{}", std::process::id()));
+        let (tx, rx) = channel::<Event>();
+        let tx = Mutex::new(tx);
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let r = Receiver::start(Config { dir: dir.clone(), name: "TV".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        r.set_lives(Duration::from_millis(300), HOST_SILENT);
+        r.pairing(true);
+        let pins: Vec<Option<String>> = rx.iter().filter_map(|e| if let Event::Pin(p) = e { Some(p) } else { None }).take(2).collect();
+        assert!(pins[0].is_some() && pins[1].is_none(), "{pins:?}");
+        // A new PIN before the old one ran out: only the newest one's end takes it away.
+        r.pairing(true);
+        std::thread::sleep(Duration::from_millis(150));
+        r.pairing(true);
+        let mut after = Vec::new();
+        while let Ok(Event::Pin(p)) = rx.recv_timeout(Duration::from_millis(600)) {
+            after.push(p);
+        }
+        assert_eq!(after.len(), 3, "{after:?}");
+        assert!(after[0].is_some() && after[1].is_some() && after[1] != after[0] && after[2].is_none(), "{after:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A host that goes quiet while showing (shut, asleep, off the network, its link never closed) is taken off the
+    /// screen: `stopped` comes, with a problem saying why.
+    #[test]
+    fn a_host_that_goes_quiet_is_taken_off_the_screen() {
+        let dir = std::env::temp_dir().join(format!("odp-receiver-quiet-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel::<Event>();
+        let tx = Mutex::new(tx);
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let r = Receiver::start(Config { dir: dir.clone(), name: "TV".into(), port: 0, caps: Caps::default(), kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        r.set_lives(PIN_LIFE, Duration::from_millis(1500));
+        r.pairing(true);
+        let pin = loop {
+            if let Event::Pin(Some(p)) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break p;
+            }
+        };
+        let host_id = Identity::generate();
+        let stream = TcpStream::connect(("127.0.0.1", r.port())).unwrap();
+        let me = odp::link::Me { identity: &host_id, id: "host1", name: "Laptop", caps: Caps::default() };
+        let mut link = odp::link::host(stream, me, None, Some(&pin)).unwrap();
+        link.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 1280, h: 720, fps: 30, bitrate_kbps: 4000, audio: false, audio_codec: None, group: None, region: None }).unwrap();
+        let udp_port = match link.recv().unwrap().unwrap() {
+            Message::SessionOk { udp_port, .. } => udp_port,
+            m => panic!("{m:?}"),
+        };
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let (mut sealer, _) = link.session.channel_keys(Channel::Media).open(Channel::Media);
+        let mut p = odp::media::Packetizer::new(odp::media::Kind::Video, 0);
+        for d in p.frame(&[0, 0, 0, 1, 0, 9, 9, 9], now_us(), true, &mut sealer) {
+            udp.send_to(&d, ("127.0.0.1", udp_port)).unwrap();
+        }
+        // Then nothing: no frames, no clock answers, and the link left open.
+        let started = Instant::now();
+        let (mut problem, mut stopped) = (None, false);
+        while !stopped && started.elapsed() < Duration::from_secs(10) {
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(Event::Problem(t)) => problem = Some(t),
+                Ok(Event::Stopped { host, .. }) => {
+                    assert_eq!(host, "Laptop");
+                    stopped = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(stopped, "still showing after {:?}", started.elapsed());
+        assert!(started.elapsed() >= Duration::from_millis(1400), "too soon: {:?}", started.elapsed());
+        assert!(problem.is_some_and(|t| t.contains("Laptop stopped answering")));
+        drop(link);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn connection_problems_read_as_plain_words() {
+        assert_eq!(connect_problem("192.168.1.5", "the PIN doesn't match").as_deref(), Some("A computer at 192.168.1.5 typed a PIN that doesn't match. Type the PIN shown here."));
+        assert!(connect_problem("192.168.1.5", "not pairing").is_some_and(|t| t.contains("while no PIN was showing")));
+        assert_eq!(connect_problem("192.168.1.5", "the other side closed the connection"), None);
     }
 }
