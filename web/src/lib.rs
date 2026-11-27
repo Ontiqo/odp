@@ -134,6 +134,12 @@ impl Web {
         self.event(serde_json::json!({"t": "pin", "pin": pin}));
     }
 
+    /// Pairing with a PIN chosen elsewhere (Some opens, None closes), without an event: a screen that takes several
+    /// computers at once runs one receiver for each connection and shows one PIN for all of them.
+    pub fn set_pin(&mut self, pin: Option<String>) {
+        self.pin = pin;
+    }
+
     /// What to do next, in order.
     pub fn take(&mut self) -> Vec<Out> {
         std::mem::take(&mut self.out)
