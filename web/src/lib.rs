@@ -66,6 +66,8 @@ pub struct Web {
     out: Vec<Out>,
     /// The UDP port the casting computer sends media to (the page's bridge says it).
     pub udp_port: u16,
+    /// The host takes game controllers (input.controllers).
+    controllers: bool,
 }
 
 impl Web {
@@ -93,6 +95,7 @@ impl Web {
             need_key: true,
             out: Vec::new(),
             udp_port: 0,
+            controllers: false,
         }
     }
 
@@ -119,6 +122,7 @@ impl Web {
         self.clock = Default::default();
         self.last_frame = None;
         self.need_key = true;
+        self.controllers = false;
     }
 
     /// A host paired before (from the page's storage).
@@ -138,6 +142,32 @@ impl Web {
     /// computers at once runs one receiver for each connection and shows one PIN for all of them.
     pub fn set_pin(&mut self, pin: Option<String>) {
         self.pin = pin;
+    }
+
+    /// A message to the host from the screen around this receiver (`room.presenters`, an error), once in session.
+    pub fn say(&mut self, m: &Message) {
+        if self.session.is_some() {
+            self.send(m);
+        }
+    }
+
+    /// The host's id from its hello (empty until it has said it).
+    pub fn host_id(&self) -> &str {
+        &self.host.0
+    }
+
+    /// Whether the host takes game controllers as controllers (`input.controllers`, ODP 1.1).
+    pub fn controllers(&self) -> bool {
+        self.controllers
+    }
+
+    /// A game controller's whole state to the host (input kind 4, on the media socket like the pointer). The screen
+    /// sends it when it changes and again while it is held (a lost datagram is repaired by the next).
+    pub fn pad(&mut self, pad: odp::input::Pad) {
+        if let Some(sealer) = self.input.as_mut() {
+            let d = odp::input::seal(&odp::input::Event::Pad(pad), sealer);
+            self.out.push(Out::Media(d));
+        }
     }
 
     /// What to do next, in order.
@@ -194,7 +224,8 @@ impl Web {
             (State::Hello, Message::Hello { id, name, .. }) => {
                 self.host = (id, name);
                 let caps = self.caps.clone();
-                self.send(&Message::Hello { versions: vec![odp::VERSION.into()], id: self.id.clone(), name: self.name.clone(), role: "receiver".into(), caps });
+                // Every version it speaks, as the other receivers list them (a host takes the newest both share).
+                self.send(&Message::Hello { versions: odp::VERSIONS.iter().map(|v| v.to_string()).collect(), id: self.id.clone(), name: self.name.clone(), role: "receiver".into(), caps });
                 State::PairOrOffer
             }
             (State::PairOrOffer, Message::PairStart { spake }) => {
@@ -281,6 +312,14 @@ impl Web {
                 self.send(&Message::CinemaStatus { position_ms, at_us, state: PlayState::Paused, error: Some("drm_unsupported".into()) });
             }
             Message::CinemaClose => self.event(serde_json::json!({"t": "cinema.close"})),
+            // ODP 1.1: the host takes game controllers as controllers while on; moderating who shows (the screen around
+            // this receiver decides whether this host may: an owner, not a meeting room's guest).
+            Message::Controllers { on } => {
+                self.controllers = on;
+                self.event(serde_json::json!({"t": "controllers", "on": on}));
+            }
+            Message::RoomWatch { on } => self.event(serde_json::json!({"t": "room.watch", "on": on})),
+            Message::RoomEnd { slot } => self.event(serde_json::json!({"t": "room.end", "slot": slot})),
             Message::Bye => self.state = State::Closed,
             _ => {}
         }
