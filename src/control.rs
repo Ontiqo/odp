@@ -192,6 +192,11 @@ pub enum Message {
     /// ODP 1.2, the receiver to one owner that listed inputs: switch the monitor to that one.
     #[serde(rename = "monitor.switch")]
     MonitorSwitch { id: String },
+    /// ODP 1.3, the owner to the receiver that asked, once it has acted on `monitor.switch`: `ok` when the monitor
+    /// switched (or the computers that can switch it were asked); otherwise `text` says why not, in plain words for
+    /// the screen to show. Sent only to receivers whose `hello` lists `odp/1.3`.
+    #[serde(rename = "monitor.switched")]
+    MonitorSwitched { id: String, ok: bool, #[serde(default)] text: String },
     #[serde(rename = "cinema.open")]
     CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, state: PlayState, at_us: i64 },
     #[serde(rename = "cinema.control")]

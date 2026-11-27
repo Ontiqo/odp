@@ -23,9 +23,10 @@ pub mod pair;
 pub mod session;
 
 /// The protocol version this crate speaks.
-pub const VERSION: &str = "odp/1.2";
+pub const VERSION: &str = "odp/1.3";
 
-/// The versions sent in `hello`, newest first: 1.1 adds game controllers (optional); 1.0 is 0.1 frozen, the same on
+/// The versions sent in `hello`, newest first: 1.1 adds game controllers and rooms, 1.2 the monitor's inputs, 1.3 the
+/// answer to switching (all optional); 1.0 is 0.1 frozen, the same on
 /// the wire, so all are listed for receivers and hosts that still say an older one. (The key-derivation labels keep
 /// their literal "odp/0.1" text.)
-pub const VERSIONS: [&str; 4] = [VERSION, "odp/1.1", "odp/1.0", "odp/0.1"];
+pub const VERSIONS: [&str; 5] = [VERSION, "odp/1.2", "odp/1.1", "odp/1.0", "odp/0.1"];

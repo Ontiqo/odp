@@ -162,7 +162,7 @@ is the set of receivers in one synced presentation.
 ## Conformance (for community receivers)
 - A receiver is **ODP 0.1 Basic** if it does L0–L4 with H.264 and L5 clock pings; **Synced** if it adds L5 latency
   reports and calibration; **Interactive** if it adds L6; **Cinema** if it adds L7; **Rooms** (1.1) if it answers an
-  owner's `room.watch`; **Inputs** (1.2) if it takes `monitor.inputs` and sends `monitor.switch`.
+  owner's `room.watch`; **Inputs** (1.2) if it takes `monitor.inputs` and sends `monitor.switch` (and, 1.3, takes `monitor.switched`).
 - The reference receiver (`receiver/`) and a conformance host (`conformance/`, `odp-check`: a test stream, a
   wrong PIN, a lost frame, a replayed packet, clock pings, delay reports, keys, Cinema, `room.*` and `monitor.*`) are
   in the repository.
@@ -219,6 +219,12 @@ is the set of receivers in one synced presentation.
   computer, its keyboard and mouse go there too). The `id` is the host's own and opaque to the receiver. A host may
   hold a link that shows nothing for this. Hosts send `monitor.inputs` only to receivers with `caps.inputs`; receivers
   take it only from owners. `hello` lists `odp/1.2` first.
+
+## 1.3 (2026-11-28)
+- The answer to switching (L3): once an owner has acted on `monitor.switch`, it sends that receiver
+  `monitor.switched {id, ok, text}`: `ok` when the monitor switched, or the computers that can switch it were asked;
+  otherwise `text` says why not in plain words (no licence, the input isn't known, the computer is off), which the
+  screen shows. Hosts send it only to receivers whose `hello` lists `odp/1.3`. `hello` lists `odp/1.3` first.
 
 ## Settled for 1.0, and later
 - Opus (2026-11-26): `caps.audio_codecs`, `session.start.audio_codec`; PCM stays for receivers that don't list it.

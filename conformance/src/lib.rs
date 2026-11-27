@@ -364,6 +364,20 @@ fn minor(r: &mut Report, link: &mut Link<TcpStream>, cfg: &Config) {
         Message::MonitorSwitch { id } => Some(id.clone()),
         _ => None,
     });
+    // A 1.3 receiver hears why the monitor didn't switch (this host has no monitor), and keeps the link.
+    if id.is_some() && link.peer_versions.iter().any(|v| v == "odp/1.3") {
+        let _ = link.send(&Message::MonitorSwitched { id: "odp-check-1".into(), ok: false, text: "ODP check: a test, nothing switched.".into() });
+        let refused = wait_for(link, Duration::from_millis(1500), |m| match m {
+            Message::Error { code, text, .. } => Some(format!("{code}: {text}")),
+            _ => None,
+        });
+        let alive = link.send(&Message::SyncTarget { delay_us: 0 }).is_ok();
+        r.add(Level::Inputs, "takes the answer (monitor.switched, 1.3)", match (refused, alive) {
+            (Some(e), _) => Outcome::Fail(e),
+            (None, false) => Outcome::Fail("the link ended".into()),
+            (None, true) => Outcome::Pass,
+        });
+    }
     r.add(Level::Inputs, "asks to switch (monitor.switch)", match id {
         Some(id) if id == "odp-check-1" => Outcome::Pass,
         Some(id) => Outcome::Fail(format!("asked for \"{id}\", not the id it was given")),

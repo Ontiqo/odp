@@ -32,6 +32,7 @@ pub fn event_json(e: &Event) -> serde_json::Value {
         Event::Renamed { name } => json!({"t": "renamed", "name": name}),
         // The monitor's other inputs changed (ODP 1.2): `odp_receiver_monitor_inputs` has them.
         Event::Inputs => json!({"t": "inputs"}),
+        Event::Switched { id, ok, text } => json!({"t": "switched", "id": id, "ok": ok, "text": text}),
         Event::CinemaOpen { service, url, position_ms, rate, playing, at_us } => {
             json!({"t": "cinema.open", "service": service, "url": url, "position_ms": position_ms, "rate": rate, "playing": playing, "at_us": at_us})
         }

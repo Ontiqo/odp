@@ -70,6 +70,8 @@ pub enum Event {
     Renamed { name: String },
     /// The monitor's other inputs changed (ODP 1.2): read them with `monitor_inputs`.
     Inputs,
+    /// The owner's answer to `switch_input` (ODP 1.3): `ok`, or `text` saying why the monitor didn't switch.
+    Switched { id: String, ok: bool, text: String },
     /// Cinema (L7): play `url` from its service; times are on this computer's clock.
     CinemaOpen { service: String, url: String, position_ms: i64, rate: f64, playing: bool, at_us: i64 },
     CinemaControl { position_ms: i64, rate: f64, playing: bool, at_us: i64 },
@@ -640,6 +642,12 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
                     (inner.sink)(Event::Inputs);
                 }
             }
+            // The owner's answer to a switch this screen asked for (ODP 1.3).
+            Ok(Some(Message::MonitorSwitched { id, ok, text })) => {
+                if slot.owner {
+                    (inner.sink)(Event::Switched { id, ok, text });
+                }
+            }
             // An owner ending a presenter.
             Ok(Some(Message::RoomEnd { slot: which })) => {
                 if slot.owner {
@@ -1010,6 +1018,9 @@ mod tests {
             }
         };
         assert_eq!(asked, "input:17");
+        assert_eq!(host.version(), odp::VERSION, "both speak 1.3");
+        host.send(&Message::MonitorSwitched { id: "input:17".into(), ok: false, text: "TV box: the monitor didn't answer.".into() }).unwrap();
+        assert!(rx.iter().any(|e| e == Event::Switched { id: "input:17".into(), ok: false, text: "TV box: the monitor didn't answer.".into() }));
         drop(r);
         let _ = std::fs::remove_dir_all(dir);
     }
