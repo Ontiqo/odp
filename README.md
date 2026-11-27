@@ -14,10 +14,11 @@ host from it.
   others through its C interface (`ffi`), and Android through its Java interface (feature `android`,
   `app.omninput.screen.Odp`).
 - `conformance/`: `odp-check`, a conformance host (MPL-2.0). Show a PIN on a receiver, then
-  `cargo run --release -p odp-check -- <address:port> <pin> [--key 10]`: it pairs (after trying a wrong PIN), comes
-  back as a paired host, casts 30 frames of H.264 colour bars in a loop, loses a frame, replays a packet, answers
-  clock pings and asks for Cinema, then prints each check and the levels the receiver meets (Basic, Synced,
-  Interactive, Cinema).
+  `cargo run --release -p odp-check -- <address:port> <pin> [--key 10] [--switch 30]`: it pairs (after trying a wrong
+  PIN), comes back as a paired host, casts 30 frames of H.264 colour bars in a loop, loses a frame, replays a packet,
+  answers clock pings, asks for Cinema, watches the room (1.1) and sends the monitor's inputs (1.2), then prints each
+  check, the version both sides speak and the levels the receiver meets (Basic, Synced, Interactive, Cinema, Rooms,
+  Inputs). `--key` waits for a key pressed at the receiver; `--switch` for "ODP check input" chosen in its menu.
 
 ```
 cargo test

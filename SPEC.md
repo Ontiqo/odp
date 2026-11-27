@@ -161,9 +161,11 @@ is the set of receivers in one synced presentation.
 
 ## Conformance (for community receivers)
 - A receiver is **ODP 0.1 Basic** if it does L0–L4 with H.264 and L5 clock pings; **Synced** if it adds L5 latency
-  reports and calibration; **Interactive** if it adds L6; **Cinema** if it adds L7.
+  reports and calibration; **Interactive** if it adds L6; **Cinema** if it adds L7; **Rooms** (1.1) if it answers an
+  owner's `room.watch`; **Inputs** (1.2) if it takes `monitor.inputs` and sends `monitor.switch`.
 - The reference receiver (`receiver/`) and a conformance host (`conformance/`, `odp-check`: a test stream, a
-  wrong PIN, a lost frame, a replayed packet, clock pings, delay reports, keys and Cinema) are in the repository.
+  wrong PIN, a lost frame, a replayed packet, clock pings, delay reports, keys, Cinema, `room.*` and `monitor.*`) are
+  in the repository.
 
 ## What runs today (2026-11-26)
 - Hosts: Omninput on Windows (desktop capture with the pointer drawn in, H.264 on the graphics card or in software),

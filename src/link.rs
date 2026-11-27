@@ -22,6 +22,8 @@ pub struct Link<S: Read + Write> {
     pub peer_id: String,
     pub peer_name: String,
     pub peer_caps: Caps,
+    /// The versions the other side's `hello` listed (newest first); `version()` is the one both speak.
+    pub peer_versions: Vec<String>,
     /// The other side's identity key (to store after pairing).
     pub peer_key: [u8; 32],
 }
@@ -94,7 +96,7 @@ pub struct Me<'a> {
 /// The host's side. `known` is the receiver's identity key stored at pairing (None: pair now with `pin`).
 pub fn host<S: Read + Write>(mut stream: S, me: Me<'_>, known: Option<[u8; 32]>, pin: Option<&str>) -> Result<Link<S>, String> {
     send_plain(&mut stream, &Message::Hello { versions: crate::VERSIONS.iter().map(|v| v.to_string()).collect(), id: me.id.into(), name: me.name.into(), role: "host".into(), caps: Caps::default() })?;
-    let Message::Hello { id, name, caps, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
+    let Message::Hello { id, name, caps, versions, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
     let expected = match known {
         Some(k) => k,
         None => {
@@ -109,7 +111,7 @@ pub fn host<S: Read + Write>(mut stream: S, me: Me<'_>, known: Option<[u8; 32]>,
         }
     };
     let link = exchange(&mut stream, Role::Host, me.identity, Some(expected), None)?;
-    Ok(Link { stream, session: link, peer_id: id, peer_name: name, peer_caps: caps, peer_key: expected })
+    Ok(Link { stream, session: link, peer_id: id, peer_name: name, peer_caps: caps, peer_versions: versions, peer_key: expected })
 }
 
 /// What a receiver knows when a host connects.
@@ -125,7 +127,7 @@ pub struct ReceiverPolicy<'a> {
 
 /// The receiver's side.
 pub fn receiver<S: Read + Write>(mut stream: S, me: Me<'_>, policy: ReceiverPolicy<'_>) -> Result<Link<S>, String> {
-    let Message::Hello { id, name, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
+    let Message::Hello { id, name, versions, .. } = recv_plain(&mut stream)? else { return Err("expected hello".into()) };
     send_plain(&mut stream, &Message::Hello { versions: crate::VERSIONS.iter().map(|v| v.to_string()).collect(), id: me.id.into(), name: me.name.into(), role: "receiver".into(), caps: me.caps })?;
     // The host either starts pairing or, when it knows this receiver, offers a session. A host this receiver knows
     // may pair again (it lost its keys) while a PIN is on screen: the new key replaces the stored one.
@@ -154,7 +156,7 @@ pub fn receiver<S: Read + Write>(mut stream: S, me: Me<'_>, policy: ReceiverPoli
     };
     let session = exchange(&mut stream, Role::Receiver, me.identity, Some(expected), offer)?;
     let peer_key = session.peer;
-    Ok(Link { stream, session, peer_id: id, peer_name: name, peer_caps: Caps::default(), peer_key })
+    Ok(Link { stream, session, peer_id: id, peer_name: name, peer_caps: Caps::default(), peer_versions: versions, peer_key })
 }
 
 /// The session exchange; `offer` is the other side's first `session.offer` when it was already read.
@@ -179,6 +181,11 @@ fn exchange<S: Read + Write>(stream: &mut S, role: Role, me: &Identity, expected
 }
 
 impl<S: Read + Write> Link<S> {
+    /// The newest version both sides list (`odp/0.1` when they share none: the draft every side speaks).
+    pub fn version(&self) -> &'static str {
+        crate::VERSIONS.iter().find(|v| self.peer_versions.iter().any(|p| p == *v)).copied().unwrap_or("odp/0.1")
+    }
+
     /// Sends a message sealed on the control channel.
     pub fn send(&mut self, m: &Message) -> Result<(), String> {
         let sealed = self.session.sealer(Channel::Control).seal(b"odp control", &m.to_json());

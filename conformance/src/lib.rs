@@ -7,6 +7,9 @@
 //! - **Synced**: reports its delay (`sync.latency`), which needs it to decode and show the frames.
 //! - **Interactive**: a key pressed at the receiver arrives as `input.key` (only when asked to wait for one).
 //! - **Cinema**: answers `cinema.open` with `cinema.status`.
+//! - **Rooms** (1.1, receivers with `caps.room`): answers an owner's `room.watch` with `room.presenters` naming it.
+//! - **Inputs** (1.2, receivers with `caps.inputs`): takes `monitor.inputs` from an owner, and (only when asked to wait
+//!   for one) sends `monitor.switch` with the id of the input chosen at the receiver.
 //!
 //! The video is 30 frames of H.264 colour bars (one key frame), sent in a loop at 30 frames a second.
 
@@ -37,6 +40,8 @@ pub enum Level {
     Synced,
     Interactive,
     Cinema,
+    Rooms,
+    Inputs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +61,8 @@ pub struct Check {
 #[derive(Default, Debug)]
 pub struct Report {
     pub checks: Vec<Check>,
+    /// The version both sides speak (`odp/1.2`), once the receiver has answered `hello`.
+    pub version: String,
 }
 
 impl Report {
@@ -79,9 +86,10 @@ impl Report {
             };
             s.push_str(&format!("{mark}  {:<11} {}{why}\n", format!("{:?}", c.level), c.name));
         }
-        let levels = [Level::Basic, Level::Synced, Level::Interactive, Level::Cinema];
+        let levels = [Level::Basic, Level::Synced, Level::Interactive, Level::Cinema, Level::Rooms, Level::Inputs];
         let met: Vec<String> = levels.iter().filter(|l| self.meets(**l)).map(|l| format!("{l:?}")).collect();
-        s.push_str(&format!("ODP 0.1: {}\n", if met.is_empty() { "no level met".into() } else { met.join(", ") }));
+        let version = if self.version.is_empty() { "ODP" } else { &self.version };
+        s.push_str(&format!("{version}: {}\n", if met.is_empty() { "no level met".into() } else { met.join(", ") }));
         s
     }
 }
@@ -95,6 +103,8 @@ pub struct Config {
     pub key_wait: Duration,
     /// Cast the test video this long.
     pub seconds: u64,
+    /// Wait this long for the input named "ODP check input" to be chosen at the receiver (0: skip that check).
+    pub switch_wait: Duration,
 }
 
 pub fn now_us() -> i64 {
@@ -120,6 +130,7 @@ pub fn run(cfg: &Config) -> Report {
     let (key, caps) = match connect().and_then(|s| host(s, me(), None, Some(&cfg.pin))) {
         Ok(link) => {
             r.add(Level::Basic, "pairs with the PIN it shows", Outcome::Pass);
+            r.version = link.version().to_string();
             (link.peer_key, link.peer_caps.clone())
         }
         Err(e) => {
@@ -162,6 +173,7 @@ pub fn run(cfg: &Config) -> Report {
     };
     let target = std::net::SocketAddr::new(link.stream().peer_addr().map(|a| a.ip()).unwrap_or([127, 0, 0, 1].into()), udp_port);
     cast(&mut r, &mut link, target, cfg);
+    minor(&mut r, &mut link, cfg);
     let _ = link.send(&Message::SessionStop);
     let _ = link.send(&Message::Bye);
     r
@@ -304,6 +316,59 @@ fn cast(r: &mut Report, link: &mut Link<TcpStream>, target: std::net::SocketAddr
         (false, false) => Outcome::Fail("no input.key".into()),
     });
     r.add(Level::Cinema, "answers cinema.open", if cinema { Outcome::Pass } else if caps_cinema_absent(link) { Outcome::Skipped("no cinema in its caps".into()) } else { Outcome::Fail("no cinema.status".into()) });
+}
+
+/// The 1.1 and 1.2 additions, on the owner's link while it shows: moderating (`room.*`) and the monitor's other inputs
+/// (`monitor.*`), each only when the receiver's caps say it has them.
+fn minor(r: &mut Report, link: &mut Link<TcpStream>, cfg: &Config) {
+    let caps = link.peer_caps.clone();
+    if caps.room {
+        let _ = link.send(&Message::RoomWatch { on: true });
+        let list = wait_for(link, Duration::from_secs(3), |m| match m {
+            Message::RoomPresenters { list } => Some(list.clone()),
+            _ => None,
+        });
+        let _ = link.send(&Message::RoomWatch { on: false });
+        r.add(Level::Rooms, "lists who shows (room.presenters)", match list {
+            Some(l) if l.iter().any(|p| p.name == "ODP conformance host") => Outcome::Pass,
+            Some(l) => Outcome::Fail(format!("this host isn't in the list: {l:?}")),
+            None => Outcome::Fail("no room.presenters within 3 s of room.watch".into()),
+        });
+    } else {
+        r.add(Level::Rooms, "lists who shows (room.presenters)", Outcome::Skipped("no room in its caps".into()));
+    }
+    if !caps.inputs {
+        r.add(Level::Inputs, "takes the monitor's inputs (monitor.inputs)", Outcome::Skipped("no inputs in its caps".into()));
+        return;
+    }
+    let list = vec![odp::control::MonitorInput { id: "odp-check-1".into(), name: "ODP check input".into() }];
+    if let Err(e) = link.send(&Message::MonitorInputs { list }) {
+        return r.add(Level::Inputs, "takes the monitor's inputs (monitor.inputs)", Outcome::Fail(e));
+    }
+    // Taken: no error back within 1.5 s and the link still up.
+    let refused = wait_for(link, Duration::from_millis(1500), |m| match m {
+        Message::Error { code, text, .. } => Some(format!("{code}: {text}")),
+        _ => None,
+    });
+    let alive = link.send(&Message::SyncTarget { delay_us: 0 }).is_ok();
+    r.add(Level::Inputs, "takes the monitor's inputs (monitor.inputs)", match (refused, alive) {
+        (Some(e), _) => Outcome::Fail(e),
+        (None, false) => Outcome::Fail("the link ended".into()),
+        (None, true) => Outcome::Pass,
+    });
+    if cfg.switch_wait.is_zero() {
+        return r.add(Level::Inputs, "asks to switch (monitor.switch)", Outcome::Skipped("not asked to wait for it (--switch)".into()));
+    }
+    eprintln!("Choose \"ODP check input\" in the receiver's menu in the next {} s.", cfg.switch_wait.as_secs());
+    let id = wait_for(link, cfg.switch_wait, |m| match m {
+        Message::MonitorSwitch { id } => Some(id.clone()),
+        _ => None,
+    });
+    r.add(Level::Inputs, "asks to switch (monitor.switch)", match id {
+        Some(id) if id == "odp-check-1" => Outcome::Pass,
+        Some(id) => Outcome::Fail(format!("asked for \"{id}\", not the id it was given")),
+        None => Outcome::Fail("no monitor.switch".into()),
+    });
 }
 
 fn caps_cinema_absent(link: &Link<TcpStream>) -> bool {

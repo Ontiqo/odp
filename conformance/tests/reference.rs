@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[test]
-fn the_reference_receiver_meets_basic_synced_and_cinema() {
+fn the_reference_receiver_meets_basic_synced_cinema_rooms_and_inputs() {
     let dir = std::env::temp_dir().join(format!("odp-check-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let caps = odp::control::Caps { decode: vec![odp::control::Decode { codec: "h264".into(), max_w: 1920, max_h: 1080, max_fps: 60, hw: false }], keyboard: true, cinema: vec!["widevine".into()], ..Default::default() };
+    let caps = odp::control::Caps { decode: vec![odp::control::Decode { codec: "h264".into(), max_w: 1920, max_h: 1080, max_fps: 60, hw: false }], keyboard: true, inputs: true, cinema: vec!["widevine".into()], ..Default::default() };
     let pin = Arc::new(Mutex::new(None::<String>));
     let me: Arc<Mutex<Option<Receiver>>> = Arc::new(Mutex::new(None));
     let (p, m) = (pin.clone(), me.clone());
@@ -40,10 +40,13 @@ fn the_reference_receiver_meets_basic_synced_and_cinema() {
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    let report = odp_check::run(&odp_check::Config { address: format!("127.0.0.1:{}", r.port()), pin, key_wait: Duration::ZERO, seconds: 8 });
+    let report = odp_check::run(&odp_check::Config { address: format!("127.0.0.1:{}", r.port()), pin, key_wait: Duration::ZERO, seconds: 8, switch_wait: Duration::ZERO });
     print!("{}", report.text());
     assert!(report.meets(odp_check::Level::Basic), "{}", report.text());
     assert!(report.meets(odp_check::Level::Synced), "{}", report.text());
     assert!(report.meets(odp_check::Level::Cinema), "{}", report.text());
+    assert!(report.meets(odp_check::Level::Rooms), "{}", report.text());
+    assert!(report.checks.iter().any(|c| c.level == odp_check::Level::Inputs && c.outcome == odp_check::Outcome::Pass), "{}", report.text());
+    assert_eq!(report.version, odp::VERSION);
     let _ = std::fs::remove_dir_all(&dir);
 }
