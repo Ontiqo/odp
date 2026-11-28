@@ -1,4 +1,5 @@
 # Security and cache headers for odp.omninput.app: our own stylesheets, scripts, fonts and images only.
+# no-transform keeps Cloudflare from adding scripts to the page (the zone's Web Analytics beacon).
 
 /*
   X-Content-Type-Options: nosniff
@@ -6,10 +7,9 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
   Content-Security-Policy: default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'; upgrade-insecure-requests
 
-/css/*
-  Cache-Control: public, max-age=0, must-revalidate
 
 /fonts/*
   ! Cache-Control
