@@ -112,6 +112,10 @@ struct Slot {
     controllers: Arc<AtomicBool>,
     /// The host's name, as presenters are listed.
     name: String,
+    /// The host's id (its hello), listed in screen.showing.
+    host: String,
+    /// It speaks ODP 1.5 (it takes screen.showing).
+    v15: bool,
     /// An owner (paired outside meeting-room mode), which may watch and end presenters (room.*, ODP 1.1).
     owner: bool,
     /// It shows a picture now.
@@ -503,9 +507,14 @@ impl Receiver {
 /// Who shows here now, to each owner watching (room.presenters, ODP 1.1).
 fn tell_presenters(inner: &Arc<Inner>) {
     let slots = inner.slots.lock().unwrap();
-    let list: Vec<odp::control::Presenter> = slots.iter().filter(|s| s.showing.load(Ordering::SeqCst)).map(|s| odp::control::Presenter { slot: s.id, name: s.name.clone() }).collect();
+    let list: Vec<odp::control::Presenter> = slots.iter().filter(|s| s.showing.load(Ordering::SeqCst)).map(|s| odp::control::Presenter { slot: s.id, name: s.name.clone(), id: None }).collect();
     for s in slots.iter().filter(|s| s.owner && s.watching.load(Ordering::SeqCst)) {
         let _ = s.out.send(Message::RoomPresenters { list: list.clone() });
+    }
+    // Every host that speaks 1.5 hears who shows, with ids (screen.showing): they decide who combines.
+    let showing: Vec<odp::control::Presenter> = slots.iter().filter(|s| s.showing.load(Ordering::SeqCst)).map(|s| odp::control::Presenter { slot: s.id, name: s.name.clone(), id: Some(s.host.clone()) }).collect();
+    for s in slots.iter().filter(|s| s.v15) {
+        let _ = s.out.send(Message::ScreenShowing { list: showing.clone() });
     }
 }
 
@@ -587,6 +596,8 @@ fn serve(inner: &Arc<Inner>, stream: TcpStream) {
         spoiled: Arc::new(AtomicBool::new(false)),
         controllers: Arc::new(AtomicBool::new(false)),
         name: link.peer_name.clone(),
+        host: link.peer_id.clone(),
+        v15: link.peer_versions.iter().any(|v| v == "odp/1.5"),
         owner: !inner.room_guests.lock().unwrap().contains(&link.peer_id),
         showing: AtomicBool::new(false),
         watching: AtomicBool::new(false),
@@ -1021,6 +1032,45 @@ mod tests {
         assert_eq!(host.version(), odp::VERSION, "both speak 1.3");
         host.send(&Message::MonitorSwitched { id: "input:17".into(), ok: false, text: "TV box: the monitor didn't answer.".into() }).unwrap();
         assert!(rx.iter().any(|e| e == Event::Switched { id: "input:17".into(), ok: false, text: "TV box: the monitor didn't answer.".into() }));
+        drop(r);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A host that speaks ODP 1.5 hears who shows here, with ids (screen.showing): computers decide who combines.
+    #[test]
+    fn a_host_that_speaks_1_5_hears_who_shows_with_ids() {
+        let dir = std::env::temp_dir().join(format!("odp-receiver-showing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel::<Event>();
+        let tx = Mutex::new(tx);
+        let bind = std::net::IpAddr::from([127, 0, 0, 1]);
+        let caps = Caps { streams: 1, ..Caps::default() };
+        let r = Receiver::start(Config { dir: dir.clone(), name: "TV".into(), port: 0, caps, kiosk: true, bind }, move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        })
+        .unwrap();
+        r.pairing(true);
+        let pin = loop {
+            if let Event::Pin(Some(p)) = rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                break p;
+            }
+        };
+        let id = Identity::generate();
+        let me = odp::link::Me { identity: &id, id: "alpha-node", name: "Alpha", caps: Caps::default() };
+        let mut host = odp::link::host(TcpStream::connect(("127.0.0.1", r.port())).unwrap(), me, None, Some(&pin)).unwrap();
+        assert_eq!(host.peer_caps.streams, 1, "the screen says how many pictures it plays");
+        let _ = host.stream().set_read_timeout(Some(Duration::from_secs(5)));
+        host.send(&Message::SessionStart { id: 1, mode: odp::control::Mode::Mirror, codec: "h264".into(), w: 640, h: 360, fps: 30, bitrate_kbps: 2000, audio: false, audio_codec: None, group: None, region: None }).unwrap();
+        let list = loop {
+            if let Some(Message::ScreenShowing { list }) = host.recv().unwrap() {
+                if !list.is_empty() {
+                    break list;
+                }
+            }
+        };
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id.as_deref(), Some("alpha-node"));
+        drop(host);
         drop(r);
         let _ = std::fs::remove_dir_all(dir);
     }

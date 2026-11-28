@@ -213,6 +213,10 @@ is the set of receivers in one synced presentation.
   an owner ends that presenter's link, as the screen's own controls do. A host may hold a link that shows nothing,
   only to watch. Hosts send `room.*` only to receivers with `caps.room` (a 1.0 receiver would take an unknown message
   as an error); receivers send `room.presenters` only to owners who asked.
+- ODP 1.5, combining: a receiver sends `screen.showing {list: [{slot, name, id}]}` to every host that speaks 1.5, at once
+  and whenever someone starts or stops showing (`id`: the host's hello id). With `caps.streams` (pictures the screen
+  plays at once) the computers showing agree, each on its own, whether one of them combines the pictures into one
+  stream for the screen, and which (Omninput: docs/COMBINING.md). Hosts that don't speak 1.5 never receive it.
 
 ## 1.2 (2026-11-27)
 - Switching the monitor from the screen (L3): a receiver that sits on one input of a monitor or TV (a games console's

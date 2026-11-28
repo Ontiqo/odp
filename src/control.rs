@@ -78,6 +78,9 @@ pub struct MonitorInput {
 pub struct Presenter {
     pub slot: u32,
     pub name: String,
+    /// The host's id from its hello (ODP 1.5, in `screen.showing`): how computers recognise each other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -189,6 +192,11 @@ pub enum Message {
     /// ODP 1.1, an owner to the receiver: end that presenter's link (as the screen's own "end" does).
     #[serde(rename = "room.end")]
     RoomEnd { slot: u32 },
+    /// ODP 1.5, receiver to every host that speaks 1.5, whenever it changes: the computers showing here now, in the
+    /// order they started, with their ids. With `caps.streams` they agree among themselves who combines
+    /// (Omninput's docs/COMBINING.md).
+    #[serde(rename = "screen.showing")]
+    ScreenShowing { list: Vec<Presenter> },
     /// ODP 1.2, an owner to a receiver with `caps.inputs`: the other inputs of the monitor it is on (computers, and
     /// what else is plugged in), sent when the link starts and whenever they change.
     #[serde(rename = "monitor.inputs")]
