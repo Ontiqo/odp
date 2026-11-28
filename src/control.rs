@@ -27,6 +27,10 @@ pub struct Decode {
 pub struct Caps {
     #[serde(default)]
     pub decode: Vec<Decode>,
+    /// Pictures it plays at once (one per computer shown, side by side; 0: not said, take it as 1). A screen that plays
+    /// fewer than the computers that want to show gets them combined into one picture by one of them (ODP 1.5).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub streams: u8,
     /// The display: pixels and the refresh rates it can switch to.
     #[serde(default)]
     pub display: Option<Display>,

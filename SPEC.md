@@ -81,7 +81,8 @@ is the set of receivers in one synced presentation.
 ### L3 Session
 - `hello {versions, id, name, role, caps}`. Receiver caps: `decode` (list of `{codec, profile, level, max_w, max_h,
   max_fps, hw}`), `display` (`w, h, refresh_rates, hdr, edid_latency{video_ms, audio_ms}`), `audio` (channels, rates),
-  `input` (`keyboard, pointer, touch{max_contacts}, pen`), `cinema` (`{drm: [widevine|playready|fairplay], level}` or
+  `input` (`keyboard, pointer, touch{max_contacts}, pen`), `streams` (ODP 1.5: pictures it plays at once, one per computer
+  shown side by side; absent or 0 means 1), `cinema` (`{drm: [widevine|playready|fairplay], level}` or
   absent), `profile` (`rt` | `web`).
 - `session.start {mode: mirror|extend|cinema, video{codec, w, h, fps, bitrate}, audio{codec, rate, channels},
   udp_port, group, region?}` → `session.ok {udp_port}`. `region {x, y, w, h}` (each 0..65535 of the picture's width or
