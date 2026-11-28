@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en-AU" data-product="omninput">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ODP — the Open Display Protocol</title>
+<meta name="description" content="ODP is an open protocol for showing a computer’s screen, sound and films on other screens on the same network, with their keyboard, mouse and touch sent back. Specification, reference receiver and conformance checker.">
+<link rel="canonical" href="https://odp.omninput.app/">
+<link rel="icon" href="/marks/odp.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/poppins-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/figtree-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/house.css?v=20">
+<link rel="stylesheet" href="/css/site.css?v=1">
+<script src="/js/glow.js?v=1" defer></script>
+<script src="/js/spot.js?v=1" defer></script>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ODP">
+<meta property="og:url" content="https://odp.omninput.app/">
+<meta property="og:title" content="ODP: the Open Display Protocol">
+<meta property="og:description" content="An open protocol for showing a computer’s screen, sound and films on TVs, Raspberry Pis, old PCs and tablets on the same network, with their input sent back.">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <div class="lockup">
+      <a class="home" href="/" aria-label="ODP, home">
+        <img class="mark" src="/marks/odp.svg" alt="" width="30" height="30">
+        <span class="name">ODP</span>
+      </a>
+      <a class="by" href="https://ontiqo.com/"><img src="/logo-ontiqo.svg" alt="" width="14" height="14">by Ontiqo</a>
+    </div>
+    <nav class="site-nav" aria-label="Site">
+      <a href="#spec" class="opt">Specification</a><a href="#build" class="opt">Build</a><a href="#receivers" class="opt">Receivers</a><a href="#licence" class="opt">Licence</a>
+      <a class="btn primary small" href="https://github.com/Ontiqo/odp">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="wrap hero">
+  <span class="eyebrow">Open Display Protocol</span>
+  <h1>Show a computer on any screen on the network.</h1>
+  <p class="lede">ODP is an open protocol for showing a computer’s screen, sound and films on other screens on the same network: TVs, Raspberry Pis, old PCs and tablets. The keyboard, mouse and touch of those screens go back to the computer, and anyone may build a receiver or a host from it.</p>
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/Ontiqo/odp/blob/main/SPEC.md">Read the specification</a>
+    <a class="btn" href="https://github.com/Ontiqo/odp">Source on GitHub</a>
+  </div>
+  <div class="hero-media">
+    <figure class="diagram odp-map">
+      <svg class="flow wide" viewBox="0 0 780 300" aria-hidden="true">
+        <rect class="halo" x="8" y="98" width="234" height="124" rx="20"/>
+        <rect class="n on" x="20" y="110" width="210" height="100" rx="14"/>
+        <text class="c" x="125" y="153">Computer</text>
+        <text class="m c" x="125" y="178">host</text>
+        <path class="w" d="M230 152C390 152 390 50 550 50"/><path class="p" pathLength="100" d="M230 152C390 152 390 50 550 50"/>
+        <path class="w" d="M550 62C390 62 390 168 230 168"/><path class="p d2" pathLength="100" d="M550 62C390 62 390 168 230 168"/>
+        <path class="w" d="M230 152C390 152 390 154 550 154"/><path class="p d1" pathLength="100" d="M230 152C390 152 390 154 550 154"/>
+        <path class="w" d="M550 166C390 166 390 168 230 168"/><path class="p d3" pathLength="100" d="M550 166C390 166 390 168 230 168"/>
+        <path class="w" d="M230 152C390 152 390 246 550 246"/><path class="p d4" pathLength="100" d="M230 152C390 152 390 246 550 246"/>
+        <path class="w" d="M550 258C390 258 390 168 230 168"/><path class="p" pathLength="100" d="M550 258C390 258 390 168 230 168"/>
+        <rect class="n" x="550" y="20" width="210" height="72" rx="14"/>
+        <text class="c" x="655" y="52">TV</text>
+        <text class="m c" x="655" y="74">remote</text>
+        <rect class="n" x="550" y="124" width="210" height="72" rx="14"/>
+        <text class="c" x="655" y="156">Raspberry Pi</text>
+        <text class="m c" x="655" y="178">keyboard, mouse</text>
+        <rect class="n" x="550" y="228" width="210" height="72" rx="14"/>
+        <text class="c" x="655" y="260">Tablet</text>
+        <text class="m c" x="655" y="282">touch, pen</text>
+      </svg>
+      <svg class="flow narrow" viewBox="0 0 360 440" aria-hidden="true">
+        <rect class="halo" x="68" y="0" width="224" height="104" rx="20"/>
+        <rect class="n on" x="80" y="10" width="200" height="84" rx="14"/>
+        <text class="c" x="180" y="48">Computer</text>
+        <text class="m c" x="180" y="72">host</text>
+        <path class="w" d="M174 94C174 230 56 230 56 350"/><path class="p" pathLength="100" d="M174 94C174 230 56 230 56 350"/>
+        <path class="w" d="M68 350C68 230 186 230 186 94"/><path class="p d2" pathLength="100" d="M68 350C68 230 186 230 186 94"/>
+        <path class="w" d="M174 94C174 230 174 230 174 350"/><path class="p d1" pathLength="100" d="M174 94C174 230 174 230 174 350"/>
+        <path class="w" d="M186 350C186 230 186 230 186 94"/><path class="p d3" pathLength="100" d="M186 350C186 230 186 230 186 94"/>
+        <path class="w" d="M174 94C174 230 292 230 292 350"/><path class="p d4" pathLength="100" d="M174 94C174 230 292 230 292 350"/>
+        <path class="w" d="M304 350C304 230 186 230 186 94"/><path class="p" pathLength="100" d="M304 350C304 230 186 230 186 94"/>
+        <rect class="n" x="4" y="350" width="116" height="80" rx="14"/>
+        <text class="c" x="62" y="386">TV</text>
+        <text class="m c" x="62" y="410">remote</text>
+        <rect class="n" x="122" y="350" width="116" height="80" rx="14"/>
+        <text class="c" x="180" y="386">Pi</text>
+        <text class="m c" x="180" y="410">mouse</text>
+        <rect class="n" x="240" y="350" width="116" height="80" rx="14"/>
+        <text class="c" x="298" y="386">Tablet</text>
+        <text class="m c" x="298" y="410">touch</text>
+      </svg>
+      <figcaption>The computer sends its picture, sound and films to each screen on a shared clock, so they play together. Each screen sends its own keys, pointer, touch or pen back.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="wrap section under-hero">
+  <dl class="specs">
+    <div><dt>Version</dt><dd>1.5 <small>1.0 frozen on 27 November 2026</small></dd></div>
+    <div><dt>Code</dt><dd>MPL-2.0 <small>the specification text CC BY 4.0</small></dd></div>
+    <div><dt>Pairing</dt><dd>PIN or QR <small>SPAKE2, then Ed25519 identities</small></dd></div>
+    <div><dt>Sessions</dt><dd>Encrypted <small>X25519 keys, ChaCha20-Poly1305 on every packet</small></dd></div>
+  </dl>
+</section>
+
+<section class="wrap section" id="spec" aria-labelledby="spec-h">
+  <div class="section-head">
+    <span class="eyebrow">The specification</span>
+    <h2 id="spec-h">One document, eight layers.</h2>
+    <p>A receiver can be written on any platform from <a href="https://github.com/Ontiqo/odp/blob/main/SPEC.md">SPEC.md</a> alone. Version 1.0 changes only by errata. New features come as 1.x minor versions, which add only optional messages and fields: both sides send the versions they speak in <code>hello</code> and use the highest they share.</p>
+  </div>
+  <div class="spec-grid">
+    <div class="card">
+      <h3>Layers</h3>
+      <dl class="layers">
+        <div><dt>L0</dt><dd><b>Discovery</b> DNS-SD over mDNS, <code>_odp-receiver._tcp</code></dd></div>
+        <div><dt>L1</dt><dd><b>Control</b> framed JSON over TCP, ports 54330–54332 when free</dd></div>
+        <div><dt>L2</dt><dd><b>Pairing and keys</b> a 6-digit PIN or a QR code, then per-session keys</dd></div>
+        <div><dt>L3</dt><dd><b>Session</b> capabilities, mirror or extend, layout</dd></div>
+        <div><dt>L4</dt><dd><b>Media</b> H.264 (HEVC and AV1 optional), Opus or PCM, over UDP</dd></div>
+        <div><dt>L5</dt><dd><b>Clock and sync</b> a shared clock, latency reports, calibration</dd></div>
+        <div><dt>L6</dt><dd><b>Input</b> keyboard, pointer, touch, pen and game controllers back to the host</dd></div>
+        <div><dt>L7</dt><dd><b>Cinema</b> a film played by each screen’s own player, in step</dd></div>
+      </dl>
+    </div>
+    <div class="card">
+      <h3>Versions</h3>
+      <ol class="versions" reversed>
+        <li><span class="tag on">1.5</span><span class="when">28 Nov 2026</span><p>Combining: a screen says how many pictures it plays at once (<code>caps.streams</code>) and who is showing on it (<code>screen.showing</code>), so the computers showing can agree on one of them combining the pictures into one stream.</p></li>
+        <li><span class="tag">1.4</span><span class="when">28 Nov 2026</span><p>Connect-out: screens whose apps can only dial out (LG webOS, Hisense VIDAA) reach a host over WebSockets.</p></li>
+        <li><span class="tag">1.3</span><span class="when">28 Nov 2026</span><p><code>monitor.switched</code>: the answer to a switch, or why not in plain words. A discovery hint for how a screen brings up its PIN.</p></li>
+        <li><span class="tag">1.2</span><span class="when">27 Nov 2026</span><p>Monitor inputs: a screen on one input of a monitor switches the monitor to its other inputs (<code>monitor.inputs</code>, <code>monitor.switch</code>).</p></li>
+        <li><span class="tag">1.1</span><span class="when">27 Nov 2026</span><p>Game controllers, and rooms: the computers that own a screen see who is showing and can end a presentation (<code>room.*</code>).</p></li>
+        <li><span class="tag">1.0</span><span class="when">27 Nov 2026</span><p>Frozen: discovery, pairing, encrypted sessions, video and sound on a shared clock, input and Cinema. The same on the wire as the 0.1 draft.</p></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="wrap section" id="build" aria-labelledby="build-h">
+  <div class="section-head">
+    <span class="eyebrow">Build a receiver or a host</span>
+    <h2 id="build-h">Start from the reference code.</h2>
+    <p>Everything is Rust, in one repository. The <code>odp</code> crate does identities, PIN pairing, encrypted sessions, the shared clock and media packets. It has no capture, codecs or windows of its own: a receiver adds its platform’s decoder and display, a host its capture and encoder.</p>
+  </div>
+  <div class="grid build-grid">
+    <article class="card">
+      <span class="tag">receiver/</span>
+      <h3>The reference receiver</h3>
+      <p>Listens on 54330–54332 (any free port when those are taken), pairs with the PIN it shows, runs a session, keeps the shared clock and hands over each frame with the moment to show it. It sends the screen’s keys and pointer back. A screen app adds only its decoder and window.</p>
+      <p>Rust apps use it directly, others through its C interface (<code>ffi</code>), and Android through its Java interface (feature <code>android</code>).</p>
+    </article>
+    <article class="card">
+      <span class="tag">web/</span>
+      <h3>The web receiver</h3>
+      <p>The receiver as WebAssembly, for TV platforms whose apps can’t use UDP, such as LG webOS and Samsung Tizen. It talks to the host over one WebSocket (the web profile); pairing and encryption stay end to end, and frames decode with WebCodecs.</p>
+    </article>
+    <article class="card">
+      <span class="tag">out/</span>
+      <h3>Connect-out for hosts</h3>
+      <p><code>odp-out</code> listens for screens that can only dial out. Each one appears to the host as an ordinary screen on a loopback address, so nothing else in the host changes.</p>
+    </article>
+    <article class="card">
+      <span class="tag">conformance/</span>
+      <h3>odp-check</h3>
+      <p>A conformance host. It pairs (after trying a wrong PIN), comes back as a paired host, casts H.264 colour bars, loses a frame, replays a packet, answers clock pings, asks for Cinema, watches the room and sends the monitor’s inputs. Then it prints each check, the version both sides speak and the levels the receiver meets.</p>
+    </article>
+  </div>
+
+  <div class="check">
+    <div class="check-text">
+      <h3>Test your receiver</h3>
+      <p>Show a PIN on the receiver, then run <code>odp-check</code> with its address and port. <code>--key</code> waits that many seconds for a key pressed at the receiver; <code>--switch</code> for “ODP check input” chosen in its menu. For a screen that connects out, <code>--out &lt;pin&gt; --lan</code> waits for it to dial in.</p>
+      <ul class="levels">
+        <li><b>Basic</b> discovery to media, with H.264 and clock pings</li>
+        <li><b>Synced</b> latency reports and calibration</li>
+        <li><b>Interactive</b> input back to the host</li>
+        <li><b>Cinema</b> films in step</li>
+        <li><b>Rooms</b> answers an owner’s <code>room.watch</code> (1.1)</li>
+        <li><b>Inputs</b> monitor inputs and switching (1.2, 1.3)</li>
+      </ul>
+    </div>
+    <pre class="cmd"><code>git clone https://github.com/Ontiqo/odp
+cd odp
+cargo test
+
+cargo run --release -p odp-check -- &lt;address:port&gt; &lt;pin&gt; [--key 10] [--switch 30]</code></pre>
+  </div>
+</section>
+
+<section class="wrap section" id="receivers" aria-labelledby="receivers-h">
+  <div class="section-head">
+    <span class="eyebrow">Receivers and hosts</span>
+    <h2 id="receivers-h">What speaks ODP.</h2>
+    <p>Ontiqo’s own screen apps, <strong>Omninput Screen</strong>, are built on the reference receiver and the web receiver. They are coming with Omninput 2.0, and none is in a store yet.</p>
+  </div>
+  <div class="grid rx-grid">
+    <div class="card rx"><span class="tag">Android</span><h3>Android TV, Google TV, Fire TV</h3></div>
+    <div class="card rx"><span class="tag">Apple</span><h3>Apple TV, iPhone, iPad, Mac</h3></div>
+    <div class="card rx"><span class="tag">Xbox</span><h3>Xbox</h3></div>
+    <div class="card rx"><span class="tag">Tizen</span><h3>Samsung TVs</h3></div>
+    <div class="card rx"><span class="tag">Web app</span><h3>LG (webOS) and VIDAA TVs</h3><p>One web app for both.</p></div>
+    <div class="card rx"><span class="tag">Kiosk</span><h3>Raspberry Pi or a spare PC</h3><p>A kiosk image that boots into a screen.</p></div>
+  </div>
+  <p class="host-line"><strong>The host:</strong> <a href="https://omninput.app">Omninput</a> on Windows, macOS and Linux. Showing on other screens comes with Omninput 2.0 too, and then a computer with Omninput can also be a receiver.</p>
+</section>
+
+<section class="wrap section" id="licence" aria-labelledby="licence-h">
+  <div class="section-head">
+    <span class="eyebrow">Licence and name</span>
+    <h2 id="licence-h">Open code, Ontiqo’s name.</h2>
+  </div>
+  <div class="grid licence-grid">
+    <div class="card">
+      <h3>The code: MPL-2.0</h3>
+      <p>The code is under the <a href="https://github.com/Ontiqo/odp/blob/main/LICENSE">Mozilla Public License 2.0</a>: take it, change it, and build screens and senders on it. The specification text is under Creative Commons Attribution 4.0.</p>
+    </div>
+    <div class="card">
+      <h3>The name: “works with Omninput”</h3>
+      <p>Anyone may say their app, device or kiosk <strong>works with Omninput</strong> or is <strong>for Omninput</strong>. The Omninput name and logo belong to Ontiqo Pty Ltd: don’t use them as a product name or logo. <a href="https://github.com/Ontiqo/odp/blob/main/TRADEMARKS.md">TRADEMARKS.md</a> has the details.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap section" id="links" aria-labelledby="links-h">
+  <div class="section-head">
+    <h2 id="links-h">Links</h2>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="https://github.com/Ontiqo/odp">github.com/Ontiqo/odp</a>
+    <a class="btn" href="https://github.com/Ontiqo/odp/blob/main/SPEC.md">SPEC.md</a>
+    <a class="btn" href="https://omninput.app">Omninput</a>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap cols">
+    <div>
+      <h2>ODP</h2>
+      <ul><li><a href="https://github.com/Ontiqo/odp/blob/main/SPEC.md">Specification</a></li><li><a href="https://github.com/Ontiqo/odp">GitHub</a></li><li><a href="https://github.com/Ontiqo/odp/issues">Issues</a></li><li><a href="https://github.com/Ontiqo/odp/blob/main/LICENSE">Licence</a></li><li><a href="https://github.com/Ontiqo/odp/blob/main/TRADEMARKS.md">Name and logo</a></li></ul>
+    </div>
+    <div>
+      <h2>Ontiqo</h2>
+      <ul><li><a href="https://omninput.app">Omninput</a></li><li><a href="https://ontiqo.com/">More software</a></li></ul>
+    </div>
+  </div>
+  <div class="wrap legal">
+    <img src="/logo-ontiqo.svg" alt="" width="16" height="16">
+    <span>© 2026 Ontiqo Pty Ltd · ACN 701 340 418 · Daylesford, Victoria, Australia</span>
+  </div>
+</footer>
+</body>
+</html>
