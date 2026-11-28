@@ -4,7 +4,8 @@ A protocol for showing a computer's screen, sound and films on other screens on 
 old PCs, tablets), with the keyboard, mouse and touch of those screens sent back. Anyone may build a receiver or a
 host from it.
 
-- [SPEC.md](SPEC.md): the protocol, version 0.1 draft (CC BY 4.0).
+- [SPEC.md](SPEC.md): the protocol (CC BY 4.0). Version 1.0 is frozen (2026-11-27); 1.1 to 1.5 add optional features.
+- [odp.omninput.app](https://odp.omninput.app): the project page.
 - `src/`: the reference implementation in Rust (MPL-2.0): identities and fingerprints, PIN pairing, encrypted
   sessions, the shared clock, and media packets. It has no capture, codecs or windows of its own: a receiver adds its
   platform's decoder and display, a host its capture and encoder.
@@ -28,7 +29,8 @@ cargo test
 
 ## Status
 
-Version 0.1 is a draft and will change before 1.0. A conformance host for testing receivers comes with 1.0.
+Version 1.0 is frozen: it changes only by errata. New features come as 1.x minor versions, each optional and listed in
+SPEC.md; `odp-check` tests a receiver against them.
 
 ## Licence
 
