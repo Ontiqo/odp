@@ -192,11 +192,18 @@ impl<S: Read + Write> Link<S> {
         self.stream.write_all(&control::frame(&sealed)).and_then(|_| self.stream.flush()).map_err(|e| e.to_string())
     }
 
-    /// Receives the next sealed message; Ok(None) when the other side closed.
+    /// Receives the next sealed message; Ok(None) when the other side closed. A message of a type this version doesn't
+    /// know is passed over (ODP 1.5): a newer side may add types without a new version, and older sides carry on.
     pub fn recv(&mut self) -> Result<Option<Message>, String> {
-        let Some(body) = control::read_frame(&mut self.stream).map_err(|e| e.to_string())? else { return Ok(None) };
-        let plain = self.session.opener(Channel::Control).open(b"odp control", &body).ok_or("a control message that didn't open")?;
-        Message::from_json(&plain).map(Some)
+        loop {
+            let Some(body) = control::read_frame(&mut self.stream).map_err(|e| e.to_string())? else { return Ok(None) };
+            let plain = self.session.opener(Channel::Control).open(b"odp control", &body).ok_or("a control message that didn't open")?;
+            match Message::from_json(&plain) {
+                Ok(m) => return Ok(Some(m)),
+                Err(e) if e.contains("unknown variant") => continue,
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     pub fn stream(&self) -> &S {

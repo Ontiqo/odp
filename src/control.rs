@@ -279,7 +279,9 @@ mod tests {
     fn unknown_fields_are_ignored_and_unknown_types_are_errors() {
         let m = Message::from_json(br#"{"t":"sync.offset","us":-40000,"later":true}"#).unwrap();
         assert_eq!(m, Message::SyncOffset { us: -40_000 });
-        assert!(Message::from_json(br#"{"t":"something.new"}"#).is_err());
+        let e = Message::from_json(br#"{"t":"something.new"}"#).unwrap_err();
+        // Link::recv passes over exactly these (ODP 1.5).
+        assert!(e.contains("unknown variant"), "{e}");
     }
 
     #[test]

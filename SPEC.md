@@ -217,6 +217,9 @@ is the set of receivers in one synced presentation.
   and whenever someone starts or stops showing (`id`: the host's hello id). With `caps.streams` (pictures the screen
   plays at once) the computers showing agree, each on its own, whether one of them combines the pictures into one
   stream for the screen, and which (Omninput: docs/COMBINING.md). Hosts that don't speak 1.5 never receive it.
+- ODP 1.5, from this version on: a control message of a type the receiving side doesn't know is passed over, not an
+  error. New optional message types can then be added within 1.5 without a new version; sides before 1.5 still only
+  receive types their version lists.
 
 ## 1.2 (2026-11-27)
 - Switching the monitor from the screen (L3): a receiver that sits on one input of a monitor or TV (a games console's
